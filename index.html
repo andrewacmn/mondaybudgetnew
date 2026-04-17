@@ -206,16 +206,72 @@ var CONFIG = {
 'use strict';
 var $ = function(id){ return document.getElementById(id); };
 
-// ── Creative rates ──────────────────────────────────────────
+// ── Creative rates (first name → $/hr) ─────────────────────
+// Andrew has conditional rate: 230 for copy-type jobs, 380 otherwise
 var CREATIVE_RATES = {
-  'MARGO': 195,'LISA': 195,'BRETT': 250,
-  'COPYWRITING': 230,'ANDREW': 380,'LINDSEY': 380
+  'MARGO': 195,
+  'LISA': 195,
+  'BRETT': 250,
+  'LINDSEY': 380
+  // Andrew handled via getRateFor() due to conditional rate
 };
+
+// Content types where Andrew does copywriting (rate = 230 instead of 380)
+var ANDREW_COPY_TYPES = ['TVC', 'Radio Ad'];
+
+// Match creative name (could be "Andrew Brentnall", "Margo Iredale" etc.) to rate
+function getRateFor(fullName, contentType) {
+  if (!fullName) return 0;
+  var firstName = fullName.trim().split(/\s+/)[0].toUpperCase();
+  if (firstName === 'ANDREW') {
+    // For TVC/Radio Ad, Andrew's role is ambiguous — we'll ask on the item
+    // Default to 380 (creative direction); override handled per-item
+    return 380;
+  }
+  return CREATIVE_RATES[firstName] || 0;
+}
+
+// Determine Andrew's rate for a specific item (stored per-item in a column or asked via UI)
+function getAndrewRateForItem(item) {
+  if (!item.andrewRole) return 380; // default
+  return item.andrewRole === 'copywriting' ? 230 : 380;
+}
+
+// ── Auto-estimate hours by content type ────────────────────
+// null = bespoke (no auto-estimate, require manual entry)
 var AUTO_ESTIMATES = {
-  'Billboard': 8,'Branding Materials': 8,'EDM': 4,'Front of House': 8,
-  'Key Art': 8,'Show Flyers': 8,'Programmatic Assets': 4,'Radio Ad': 2,
-  'Social Misc': 2,'Social Static Assets': 2,'Social Video (Under 90 secs)': 3,
-  'Social Video (Over 90 secs)': 5,'Out of Home': 8,'Web Banners/Tiles': 4,'Vox Pops': 8
+  'Billboard': 8,
+  'B-Roll': null,
+  'Branding Materials': 8,
+  'BTS Photos': null,
+  'BTS Videos': null,
+  'Creative Strategy': null,
+  'EDM': 4,
+  'EPKs': null,
+  'Front of House': 8,
+  'Front of House (Motion)': 8,
+  'Internal Docs': null,
+  'Key Art': 8,
+  'Show Flyers': 8,
+  'Podcast Ad': null,
+  'Programmatic Assets': 4,
+  'Photo Retouching': null,
+  'Radio Ad': 2,
+  'Show Landing Page': null,
+  'Show Website': null,
+  'Social Misc': 2,
+  'Social Static Assets': 2,
+  'Social Strategy': null,
+  'Social Video (Under 90 secs)': 3,
+  'Social Video (Over 90 secs)': 5,
+  'Out of Home': 8,
+  'Style Guide': null,
+  'Talent Photography': null,
+  'Trailer': null,
+  'TVC': null,
+  'Web Banners/Tiles': 4,
+  'Web Takeover': null,
+  'Vox Pops': 8
 };
 
 // ── State ───────────────────────────────────────────────────
@@ -278,23 +334,25 @@ function mapCols(cols) {
   var find = function(patterns) {
     for (var i = 0; i < patterns.length; i++) {
       var p = patterns[i];
+      // Match by title (case-insensitive, allows partial matches)
       var c = cols.find(function(col) { return p.test(col.title); });
-      if (c) return c.id;
+      if (c) return { id: c.id, type: c.type, title: c.title };
     }
-    return '';
+    return null;
   };
+  var id = function(m) { return m ? m.id : ''; };
   return {
-    budget:           find([/^budget$/i, /total.*budget/i, /^budget\s/i]),
-    creative1:        find([/creative\s*1|^creative$/i]),
-    creative2:        find([/creative\s*2/i]),
-    contentType:      find([/content.?type|creative.?type|job.?type/i]),
-    estimateHours:    find([/^estimated?\s*hours|auto.*estimate/i]),
-    overrideHours:    find([/override.*hours|manual.*hours|custom.*hours/i]),
-    creative1Set:     find([/creative\s*1.*set.*hours|creative\s*1\s*hours$/i, /set.*hours.*1/i]),
-    creative2Set:     find([/creative\s*2.*set.*hours|creative\s*2\s*hours$/i, /set.*hours.*2/i]),
-    timeTracking:     find([/^time.?track|actual.*time|tracked.*time/i]),
-    creative1Tracked: find([/creative\s*1.*tracked|tracked.*1/i]),
-    creative2Tracked: find([/creative\s*2.*tracked|tracked.*2/i])
+    budget:           id(find([/^budget$/i])),
+    creative1:        id(find([/^creative\s*1$/i])),
+    creative2:        id(find([/^creative\s*2$/i])),
+    contentType:      id(find([/^asset\s*type$/i, /^content\s*type$/i, /^creative\s*type$/i])),
+    estimateHours:    id(find([/^estimated?\s*hours\s*for\s*task$/i, /^estimated?\s*hours$/i])),
+    overrideHours:    id(find([/^override\s*estimated?\s*hours$/i, /override.*hours/i])),
+    creative1Set:     id(find([/^creative\s*1\s*set\s*hours$/i])),
+    creative2Set:     id(find([/^creative\s*2\s*set\s*hours$/i])),
+    creative1Tracked: id(find([/^creative\s*1\s*actual\s*time$/i, /creative\s*1.*tracked/i])),
+    creative2Tracked: id(find([/^creative\s*2\s*actual\s*time$/i, /creative\s*2.*tracked/i])),
+    andrewRole:       id(find([/^andrew.*role$/i, /andrew.*(rate|type)/i]))  // optional column for Andrew's role
   };
 }
 
@@ -307,33 +365,39 @@ function parseItem(raw) {
     return c ? (c.text || '').trim() : '';
   };
   var getNum = function(colId) {
-    var t = getText(colId); var n = parseFloat(t);
+    var t = getText(colId); var n = parseFloat(t.replace(/[^\d.-]/g, ''));
     return isNaN(n) ? 0 : n;
   };
   var getNumOrNull = function(colId) {
     var t = getText(colId); if (!t) return null;
-    var n = parseFloat(t); return isNaN(n) ? null : n;
+    var n = parseFloat(t.replace(/[^\d.-]/g, ''));
+    return isNaN(n) ? null : n;
   };
   var getTimeHours = function(colId) {
     if (!colId) return null;
     var c = cv.find(function(x){ return x.id === colId; });
-    if (!c || !c.value) return getNumOrNull(colId);
-    try {
-      var v = JSON.parse(c.value);
-      if (v && typeof v === 'object') {
-        if (typeof v.duration === 'number') return v.duration / 3600;
-        if (Array.isArray(v.additional_value)) {
-          var total = v.additional_value.reduce(function(sum, e) {
-            return sum + (parseInt(e.ended_at||0, 10) - parseInt(e.started_at||0, 10));
-          }, 0);
-          return total / 3600;
+    if (!c) return null;
+    if (c.value) {
+      try {
+        var v = JSON.parse(c.value);
+        if (v && typeof v === 'object') {
+          if (typeof v.duration === 'number') return v.duration / 3600;
+          if (Array.isArray(v.additional_value)) {
+            var total = v.additional_value.reduce(function(sum, e) {
+              return sum + (parseInt(e.ended_at||0, 10) - parseInt(e.started_at||0, 10));
+            }, 0);
+            return total / 3600;
+          }
         }
-      }
-    } catch(e) {}
+      } catch(e) {}
+    }
+    // Fallback: parse text like "3h 45m" or "3:45"
     var t = (c.text || '').trim();
-    var hm = t.match(/^(\d+):(\d+)/);
-    if (hm) return parseInt(hm[1], 10) + parseInt(hm[2], 10) / 60;
-    return getNumOrNull(colId);
+    var hmMatch = t.match(/(\d+)h\s*(\d+)?m?/i);
+    if (hmMatch) return parseInt(hmMatch[1], 10) + (parseInt(hmMatch[2]||0, 10) / 60);
+    var colonMatch = t.match(/^(\d+):(\d+)/);
+    if (colonMatch) return parseInt(colonMatch[1], 10) + parseInt(colonMatch[2], 10) / 60;
+    return null;
   };
 
   var out = {
@@ -348,42 +412,63 @@ function parseItem(raw) {
     creative2Set:     getNumOrNull(colMap.creative2Set),
     creative1Tracked: getTimeHours(colMap.creative1Tracked),
     creative2Tracked: getTimeHours(colMap.creative2Tracked),
-    totalTracked:     getTimeHours(colMap.timeTracking)
+    andrewRole:       getText(colMap.andrewRole).toLowerCase() || localStorage.getItem('andrewRole_' + raw.id) || ''
   };
 
-  if (out.estimateHours === null && out.contentType && AUTO_ESTIMATES[out.contentType]) {
-    out.estimateHours = AUTO_ESTIMATES[out.contentType];
+  // Auto-estimate from content type if estimateHours is blank
+  if (out.estimateHours === null && out.contentType) {
+    var auto = AUTO_ESTIMATES.hasOwnProperty(out.contentType) ? AUTO_ESTIMATES[out.contentType] : undefined;
+    if (auto !== null && auto !== undefined) {
+      out.estimateHours = auto;
+      out._autoEstimated = true;
+    } else if (auto === null) {
+      out._bespoke = true;  // content type exists but has no auto-estimate
+    }
   }
 
-  // Compute derived fields for card display & filtering
+  // Determine rates — handles Andrew's conditional rate
+  var isAndrewCopy = function(creativeName) {
+    if (!creativeName) return false;
+    var first = creativeName.trim().split(/\s+/)[0].toUpperCase();
+    if (first !== 'ANDREW') return false;
+    // If it's a copy-type job AND andrewRole is 'copywriting', use 230
+    if (ANDREW_COPY_TYPES.indexOf(out.contentType) !== -1 && out.andrewRole === 'copywriting') return true;
+    return false;
+  };
+
+  var c1Rate = isAndrewCopy(out.creative1) ? 230 : getRateFor(out.creative1);
+  var c2Rate = isAndrewCopy(out.creative2) ? 230 : getRateFor(out.creative2);
+
+  // Andrew on copy-type job without role set → flag for UI prompt
+  out._andrewNeedsRole = (ANDREW_COPY_TYPES.indexOf(out.contentType) !== -1) &&
+    ((out.creative1 && out.creative1.trim().split(/\s+/)[0].toUpperCase() === 'ANDREW') ||
+     (out.creative2 && out.creative2.trim().split(/\s+/)[0].toUpperCase() === 'ANDREW')) &&
+    !out.andrewRole;
+
+  // Effective estimate
   var eff = out.overrideHours !== null ? out.overrideHours : out.estimateHours;
-  var c1Rate = CREATIVE_RATES[(out.creative1 || '').toUpperCase()] || 0;
-  var c2Rate = CREATIVE_RATES[(out.creative2 || '').toUpperCase()] || 0;
   var c1Set = out.creative1Set, c2Set = out.creative2Set;
   if (c1Set === null && c2Set === null && eff !== null) {
     if (out.creative1 && out.creative2) { c1Set = eff/2; c2Set = eff/2; }
     else if (out.creative1) c1Set = eff;
   }
-  out._effEstimate   = eff;
-  out._c1Rate        = c1Rate;
-  out._c2Rate        = c2Rate;
-  out._c1Set         = c1Set;
-  out._c2Set         = c2Set;
-  out._estCost       = (c1Set||0) * c1Rate + (c2Set||0) * c2Rate;
-  // Handle single-creative case for tracked cost
-  var c1T = out.creative1Tracked, c2T = out.creative2Tracked;
-  if (!c1T && !c2T && out.totalTracked && out.creative1 && !out.creative2) c1T = out.totalTracked;
-  out._trackedHrs    = (c1T || 0) + (c2T || 0) || out.totalTracked || 0;
-  out._trackedCost   = (c1T || 0) * c1Rate + (c2T || 0) * c2Rate;
-  if (!out._trackedCost && out.totalTracked && out.creative1 && !out.creative2) {
-    out._trackedCost = out.totalTracked * c1Rate;
-  }
-  out._remaining     = out.budget - out._trackedCost;
 
-  // Health: combine quote health + live health into one status
-  out._health = computeHealth(out);
+  out._effEstimate = eff;
+  out._c1Rate      = c1Rate;
+  out._c2Rate      = c2Rate;
+  out._c1Set       = c1Set;
+  out._c2Set       = c2Set;
+  out._estCost     = (c1Set||0) * c1Rate + (c2Set||0) * c2Rate;
+  out._trackedHrs  = (out.creative1Tracked || 0) + (out.creative2Tracked || 0);
+  out._trackedCost = (out.creative1Tracked || 0) * c1Rate + (out.creative2Tracked || 0) * c2Rate;
+  out._remaining   = item_remaining(out);
+  out._health      = computeHealth(out);
 
   return out;
+}
+
+function item_remaining(o) {
+  return o.budget - o._trackedCost;
 }
 
 function computeHealth(item) {
@@ -580,12 +665,35 @@ function renderDetail(item) {
   // Quote card
   html += '<div class="card">';
   html += '<div class="card-title">Quote Check <span class="badge badge-' + quoteHealth + '">' + quoteLabel + '</span></div>';
+
+  // Andrew role prompt if needed
+  if (item._andrewNeedsRole) {
+    html += '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#78350f;">';
+    html += '<strong>Andrew is on a ' + esc(item.contentType) + ' job.</strong> Is he doing copywriting or creative direction? This affects the rate.<br>';
+    html += '<div style="display:flex;gap:6px;margin-top:8px;">';
+    html += '<button class="andrew-role-btn" data-role="copywriting" data-item="' + item.id + '" style="height:28px;padding:0 12px;border:1px solid #d97706;background:#fff;border-radius:4px;font-size:11px;font-weight:600;color:#92400e;cursor:pointer;font-family:inherit;">Copywriting ($230/hr)</button>';
+    html += '<button class="andrew-role-btn" data-role="creative_direction" data-item="' + item.id + '" style="height:28px;padding:0 12px;border:1px solid #d97706;background:#fff;border-radius:4px;font-size:11px;font-weight:600;color:#92400e;cursor:pointer;font-family:inherit;">Creative Direction ($380/hr)</button>';
+    html += '</div></div>';
+  }
+
   html += '<div class="field-grid">';
   html += field('Budget', fmt$(item.budget), 'muted');
   html += field('Content type', item.contentType || '—', item.contentType ? '' : 'muted');
-  html += fieldInput('Auto-estimate', item.estimateHours, 'estimateHours', item.id, 'hrs', item.contentType && AUTO_ESTIMATES[item.contentType] ? 'From ' + item.contentType : 'Enter manually');
-  html += fieldInput('Override hours', item.overrideHours, 'overrideHours', item.id, 'hrs', 'Blank = use auto-estimate');
+
+  var estHint = '';
+  if (item._bespoke) estHint = 'Bespoke — enter manually';
+  else if (item._autoEstimated) estHint = 'Auto from ' + item.contentType;
+  else if (!item.contentType) estHint = 'Set content type or enter manually';
+  else estHint = 'Enter manually';
+
+  html += fieldInput('Estimate hrs', item.estimateHours, 'estimateHours', item.id, 'hrs', estHint);
+  html += fieldInput('Override hrs', item.overrideHours, 'overrideHours', item.id, 'hrs', 'Blank = use estimate');
   html += '</div>';
+
+  if (item._bespoke && item.estimateHours === null) {
+    html += '<div style="background:#f1f5f9;border-radius:6px;padding:10px 12px;margin-top:10px;font-size:11px;color:#64748b;">This content type is bespoke — no auto-estimate. Enter hours manually above.</div>';
+  }
+
   if (item._effEstimate !== null && item.budget > 0) {
     var pct = (item._estCost / item.budget) * 100;
     html += '<div class="progress-wrap">';
@@ -617,6 +725,50 @@ function renderDetail(item) {
       saveField(id, colKey, inp.value.trim());
     });
   });
+
+  // Wire Andrew role buttons
+  pb.querySelectorAll('.andrew-role-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var role = btn.getAttribute('data-role');
+      var id = btn.getAttribute('data-item');
+      setAndrewRole(id, role);
+    });
+  });
+}
+
+// Store Andrew role per item — tries Monday column first, then localStorage
+function setAndrewRole(itemId, role) {
+  if (colMap.andrewRole) {
+    saveField(itemId, 'andrewRole', role);
+  } else {
+    // Store locally
+    var key = 'andrewRole_' + itemId;
+    localStorage.setItem(key, role);
+    // Update local state
+    var idx = allItems.findIndex(function(i){ return i.id === itemId; });
+    if (idx >= 0) {
+      allItems[idx].andrewRole = role;
+      // Recompute derived values
+      var raw = { id: allItems[idx].id, name: allItems[idx].name, column_values: allItems[idx]._cv };
+      var reparsed = parseItem(raw);
+      // Carry over the role
+      reparsed.andrewRole = role;
+      // Re-derive rates
+      var first1 = (reparsed.creative1 || '').trim().split(/\s+/)[0].toUpperCase();
+      var first2 = (reparsed.creative2 || '').trim().split(/\s+/)[0].toUpperCase();
+      if (first1 === 'ANDREW' && ANDREW_COPY_TYPES.indexOf(reparsed.contentType) !== -1 && role === 'copywriting') reparsed._c1Rate = 230;
+      if (first2 === 'ANDREW' && ANDREW_COPY_TYPES.indexOf(reparsed.contentType) !== -1 && role === 'copywriting') reparsed._c2Rate = 230;
+      reparsed._estCost = (reparsed._c1Set||0) * reparsed._c1Rate + (reparsed._c2Set||0) * reparsed._c2Rate;
+      reparsed._trackedCost = (reparsed.creative1Tracked||0) * reparsed._c1Rate + (reparsed.creative2Tracked||0) * reparsed._c2Rate;
+      reparsed._remaining = reparsed.budget - reparsed._trackedCost;
+      reparsed._health = computeHealth(reparsed);
+      reparsed._andrewNeedsRole = false;
+      allItems[idx] = reparsed;
+      renderDetail(reparsed);
+      renderBoard();
+    }
+    toast('Role saved locally');
+  }
 }
 
 function sumCard(label, value, sub, health) {
