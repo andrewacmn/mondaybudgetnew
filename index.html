@@ -222,8 +222,13 @@ var CREATIVE_RATES = {
 };
 
 // Content types where Andrew does copywriting (rate = 230 instead of 380)
-// Matches actual Monday asset type values
-var ANDREW_COPY_TYPES = ['TVC / BVOD', 'Radio Ad'];
+// Normalised for matching (lowercase, no extra whitespace)
+var ANDREW_COPY_TYPES = ['tvc / bvod', 'tvc/bvod', 'radio ad'];
+function isAndrewCopyType(contentType) {
+  if (!contentType) return false;
+  var norm = contentType.toLowerCase().trim().replace(/\s+/g, ' ');
+  return ANDREW_COPY_TYPES.indexOf(norm) !== -1;
+}
 
 // Match creative name (could be "Andrew Brentnall", "Margo Iredale" etc.) to rate
 function getRateFor(fullName, contentType) {
@@ -255,7 +260,7 @@ var AUTO_ESTIMATES = {
   'EDM': 4,
   'EPKs': null,
   'Front of House': 8,
-  'Front of House (Motion)': null,
+  'Front of House (Motion)': 8,
   'Internal Docs': null,
   'Key Art': 8,
   'Show Flyers': 8,
@@ -274,7 +279,7 @@ var AUTO_ESTIMATES = {
   'Style Guide': null,
   'Talent Photography': null,
   'Trailer': null,
-  'TVC / BVOD': null,
+  'TVC': null,
   'Web Banners/Tiles': 4,
   'Web Takeover': null,
   'Vox Pops': 8
@@ -442,7 +447,7 @@ function parseItem(raw) {
     var first = creativeName.trim().split(/\s+/)[0].toUpperCase();
     if (first !== 'ANDREW') return false;
     // If it's a copy-type job AND andrewRole is 'copywriting', use 230
-    if (ANDREW_COPY_TYPES.indexOf(out.contentType) !== -1 && out.andrewRole === 'copywriting') return true;
+    if (isAndrewCopyType(out.contentType) && out.andrewRole === 'copywriting') return true;
     return false;
   };
 
@@ -450,7 +455,7 @@ function parseItem(raw) {
   var c2Rate = isAndrewCopy(out.creative2) ? 230 : getRateFor(out.creative2);
 
   // Andrew on copy-type job without role set → flag for UI prompt
-  out._andrewNeedsRole = (ANDREW_COPY_TYPES.indexOf(out.contentType) !== -1) &&
+  out._andrewNeedsRole = (isAndrewCopyType(out.contentType)) &&
     ((out.creative1 && out.creative1.trim().split(/\s+/)[0].toUpperCase() === 'ANDREW') ||
      (out.creative2 && out.creative2.trim().split(/\s+/)[0].toUpperCase() === 'ANDREW')) &&
     !out.andrewRole;
@@ -792,8 +797,8 @@ function setAndrewRole(itemId, role) {
       // Re-derive rates
       var first1 = (reparsed.creative1 || '').trim().split(/\s+/)[0].toUpperCase();
       var first2 = (reparsed.creative2 || '').trim().split(/\s+/)[0].toUpperCase();
-      if (first1 === 'ANDREW' && ANDREW_COPY_TYPES.indexOf(reparsed.contentType) !== -1 && role === 'copywriting') reparsed._c1Rate = 230;
-      if (first2 === 'ANDREW' && ANDREW_COPY_TYPES.indexOf(reparsed.contentType) !== -1 && role === 'copywriting') reparsed._c2Rate = 230;
+      if (first1 === 'ANDREW' && isAndrewCopyType(reparsed.contentType) && role === 'copywriting') reparsed._c1Rate = 230;
+      if (first2 === 'ANDREW' && isAndrewCopyType(reparsed.contentType) && role === 'copywriting') reparsed._c2Rate = 230;
       reparsed._estCost = (reparsed._c1Set||0) * reparsed._c1Rate + (reparsed._c2Set||0) * reparsed._c2Rate;
       reparsed._trackedCost = (reparsed.creative1Tracked||0) * reparsed._c1Rate + (reparsed.creative2Tracked||0) * reparsed._c2Rate;
       reparsed._remaining = reparsed.budget - reparsed._trackedCost;
