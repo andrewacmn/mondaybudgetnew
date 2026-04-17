@@ -184,6 +184,7 @@ var CONFIG = {
         <input type="text" id="search" placeholder="Search jobs..." />
       </div>
       <button class="filter-pill active" data-filter="all">All <span class="count" id="c-all">0</span></button>
+      <button class="filter-pill" data-filter="withbudget">With budget <span class="count" id="c-withbudget">0</span></button>
       <button class="filter-pill" data-filter="bad">Over <span class="count" id="c-bad">0</span></button>
       <button class="filter-pill" data-filter="warn">Watch <span class="count" id="c-warn">0</span></button>
       <button class="filter-pill" data-filter="good">On track <span class="count" id="c-good">0</span></button>
@@ -581,12 +582,14 @@ function renderBoard() {
   grid.innerHTML = '';
 
   // Update counts
-  var counts = { all: allItems.length, good: 0, warn: 0, bad: 0, neutral: 0, unset: 0 };
+  var counts = { all: allItems.length, good: 0, warn: 0, bad: 0, neutral: 0, unset: 0, withbudget: 0 };
   allItems.forEach(function(it) {
     counts[it._health]++;
     if (!it.budget || it.budget <= 0) counts.unset++;
+    else counts.withbudget++;
   });
   $('c-all').textContent = counts.all;
+  $('c-withbudget').textContent = counts.withbudget;
   $('c-good').textContent = counts.good;
   $('c-warn').textContent = counts.warn;
   $('c-bad').textContent = counts.bad;
@@ -605,6 +608,7 @@ function renderBoard() {
   // Apply filter + search
   var shown = allItems.filter(function(it) {
     if (currentFilter === 'unset') { if (it.budget && it.budget > 0) return false; }
+    else if (currentFilter === 'withbudget') { if (!it.budget || it.budget <= 0) return false; }
     else if (currentFilter !== 'all' && it._health !== currentFilter) return false;
     if (searchTerm && !it.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
     if (productionFilter && it.production !== productionFilter) return false;
