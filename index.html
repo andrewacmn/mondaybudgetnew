@@ -264,49 +264,59 @@ function getTimeSessions(colId, creativeNameFilter) {
   if (!colId) return [];
   var c = (window._currentRawCV || []).find(function(x){ return x.id === colId; });
   if (!c) return [];
-  console.log('[time col ' + colId + '] value:', c.value, 'text:', c.text);
+  console.log('[time col ' + colId + '] raw value:', c.value);
+  console.log('[time col ' + colId + '] raw text:', c.text);
   if (!c.value) return [];
   try {
     var v = JSON.parse(c.value);
-    console.log('[time col ' + colId + '] parsed:', v);
+    console.log('[time col ' + colId + '] parsed object keys:', Object.keys(v));
+    console.log('[time col ' + colId + '] full parsed:', v);
 
-    // Monday duration column can structure sessions in several places
-    var sessions = [];
+    // Try every known field that might contain session data
+    var sessions = null;
+    var candidateKeys = ['additional_value', 'sessions', 'history', 'rows', 'entries'];
+    for (var i = 0; i < candidateKeys.length; i++) {
+      if (Array.isArray(v[candidateKeys[i]])) {
+        sessions = v[candidateKeys[i]];
+        console.log('[time col ' + colId + '] found sessions in key:', candidateKeys[i], 'count:', sessions.length);
+        break;
+      }
+    }
 
-    // Try: additional_value array
-    if (v && Array.isArray(v.additional_value)) {
-      sessions = v.additional_value;
-    }
-    // Try: sessions array
-    else if (v && Array.isArray(v.sessions)) {
-      sessions = v.sessions;
-    }
-    // Try: history array
-    else if (v && Array.isArray(v.history)) {
-      sessions = v.history;
-    }
-    // If there's a running_session, add it
-    if (v && v.running_session && v.running_session.started_at) {
-      sessions = sessions.concat([{
+    // Include running session if active
+    if (v.running_session && v.running_session.started_at) {
+      var runningSession = {
         started_at: v.running_session.started_at,
         ended_at: Math.floor(Date.now() / 1000),
-        started_user_id: v.running_session.started_user_id
-      }]);
+        started_user_id: v.running_session.started_user_id,
+        isRunning: true
+      };
+      sessions = (sessions || []).concat([runningSession]);
     }
 
-    if (!sessions.length) return [];
+    if (!sessions || !sessions.length) {
+      console.log('[time col ' + colId + '] no session array found');
+      return [];
+    }
 
     return sessions.map(function(session) {
-      var userId = session.started_user_id || session.manually_entered_start_user_id || session.user_id || null;
+      var userId = session.started_user_id || session.manually_entered_start_user_id || session.user_id || session.userId || null;
       var name = userId ? userNameById(userId) : '';
-      var started = parseInt(session.started_at || 0, 10);
-      var ended = parseInt(session.ended_at || 0, 10);
+      // Handle multiple possible field names for timestamps
+      var rawStart = session.started_at || session.startedAt || session.start || 0;
+      var rawEnd = session.ended_at || session.endedAt || session.end || 0;
+      // Monday stores these as unix seconds (10-digit) or milliseconds (13-digit)
+      var started = parseInt(rawStart, 10);
+      var ended = parseInt(rawEnd, 10);
+      if (started > 1e11) started = Math.floor(started / 1000); // ms -> sec
+      if (ended > 1e11) ended = Math.floor(ended / 1000);
       return {
         userId: userId,
         userName: name,
         startedAt: started ? new Date(started * 1000) : null,
         endedAt: ended ? new Date(ended * 1000) : null,
-        durationSec: ended && started ? (ended - started) : 0
+        durationSec: ended && started ? (ended - started) : 0,
+        isRunning: !!session.isRunning
       };
     }).filter(function(s){ return s.durationSec > 0; });
   } catch(e) {
@@ -977,21 +987,28 @@ function creativePicker(label, currentValue, n, itemId) {
 }
 
 function renderSessionList(sessions) {
-  // sort newest first
   sessions.sort(function(a,b){ return (b.startedAt||0) - (a.startedAt||0); });
   var total = sessions.reduce(function(s,x){ return s + x.durationSec; }, 0);
   var html = '<div style="display:flex;flex-direction:column;gap:4px;">';
   sessions.forEach(function(s) {
-    var start = s.startedAt ? s.startedAt.toLocaleString('en-AU', {day:'numeric', month:'short', hour:'numeric', minute:'2-digit', hour12:true}) : '—';
+    var dateStr = '—', timeRange = '—';
+    if (s.startedAt) {
+      dateStr = s.startedAt.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+      var startTime = s.startedAt.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', hour12: true });
+      var endTime = s.endedAt ? s.endedAt.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', hour12: true }) : 'running';
+      timeRange = startTime + ' – ' + endTime;
+    }
     var dur = formatDuration(s.durationSec);
-    html += '<div style="display:flex;justify-content:space-between;align-items:center;background:#f8fafc;border-radius:5px;padding:6px 10px;font-size:11px;">' +
-      '<span style="color:#475569;">' + esc(start) + '</span>' +
-      (s.userName ? '<span style="color:#94a3b8;font-size:10px;flex:1;margin-left:10px;">' + esc(s.userName) + '</span>' : '') +
+    var runningBadge = s.isRunning ? ' <span style="font-size:9px;background:#dcfce7;color:#15803d;padding:1px 5px;border-radius:3px;margin-left:4px;">RUNNING</span>' : '';
+    html += '<div style="display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;background:#f8fafc;border-radius:5px;padding:7px 10px;font-size:11px;">' +
+      '<span style="color:#475569;font-weight:600;min-width:80px;">' + esc(dateStr) + '</span>' +
+      '<span style="color:#64748b;">' + esc(timeRange) + runningBadge + (s.userName ? ' <span style="color:#94a3b8;font-size:10px;">· ' + esc(s.userName) + '</span>' : '') + '</span>' +
       '<span style="font-weight:600;color:#0f172a;font-variant-numeric:tabular-nums;">' + dur + '</span>' +
       '</div>';
   });
-  html += '<div style="display:flex;justify-content:space-between;padding:6px 10px 0;font-size:11px;font-weight:700;color:#0f172a;">' +
-    '<span>Total</span><span>' + formatDuration(total) + ' (' + fmtH(total/3600, 2) + ')</span></div>';
+  html += '<div style="display:flex;justify-content:space-between;padding:8px 10px 0;margin-top:2px;border-top:1px solid #e2e8f0;font-size:11px;font-weight:700;color:#0f172a;">' +
+    '<span>' + sessions.length + ' session' + (sessions.length !== 1 ? 's' : '') + '</span>' +
+    '<span>' + formatDuration(total) + ' (' + fmtH(total/3600, 2) + ')</span></div>';
   html += '</div>';
   return html;
 }
@@ -1069,12 +1086,24 @@ function savePersonField(itemId, colKey, userId) {
   var colId = colMap[colKey];
   if (!colId) { toast('Column "' + colKey + '" not found', true); return; }
   toast('Saving…');
+  // monday people columns require JSON with personsAndTeams array
   var valueObj = userId
     ? { personsAndTeams: [{ id: parseInt(userId, 10), kind: 'person' }] }
     : { personsAndTeams: [] };
   var valueStr = JSON.stringify(valueObj);
-  api('mutation { change_column_value(item_id:' + itemId + ', board_id:' + CONFIG.boardId + ', column_id:"' + colId + '", value:' + JSON.stringify(valueStr) + ') { id } }')
-    .then(function() { toast('Saved'); return fetchSingleItem(itemId); })
+  console.log('[savePersonField]', { itemId: itemId, colId: colId, valueStr: valueStr });
+  // Use change_multiple_column_values which handles people reliably
+  var mutation = 'mutation { change_multiple_column_values(item_id:' + itemId +
+    ', board_id:' + CONFIG.boardId +
+    ', column_values:' + JSON.stringify(JSON.stringify({ [colId]: valueObj })) +
+    ') { id } }';
+  console.log('[savePersonField] mutation:', mutation);
+  api(mutation)
+    .then(function(r) {
+      console.log('[savePersonField] response:', r);
+      toast('Saved');
+      return fetchSingleItem(itemId);
+    })
     .then(function(raw) {
       if (!raw) return;
       var parsed = parseItem(raw);
@@ -1083,7 +1112,10 @@ function savePersonField(itemId, colKey, userId) {
       renderDetail(parsed);
       renderBoard();
     })
-    .catch(function(e) { console.error(e); toast('Save failed: ' + e.message, true); });
+    .catch(function(e) {
+      console.error('[savePersonField] error:', e);
+      toast('Save failed: ' + e.message, true);
+    });
 }
 
 function toast(msg, isError) {
