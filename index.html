@@ -242,6 +242,49 @@ function getRateFor(fullName, contentType) {
   return CREATIVE_RATES[firstName] || 0;
 }
 
+// Get users who have a rate card entry (these are our creatives)
+function getCreativeUsers() {
+  var rated = {};
+  ['MARGO','LISA','BRETT','ANDREW','LINDSEY'].forEach(function(n){ rated[n] = true; });
+  return allUsers.filter(function(u) {
+    var first = (u.name || '').trim().split(/\s+/)[0].toUpperCase();
+    return rated[first];
+  });
+}
+
+function userNameById(id) {
+  var u = allUsers.find(function(u){ return String(u.id) === String(id); });
+  return u ? u.name : '';
+}
+
+// Parse all time tracking sessions from the column value
+// Returns array of {userId, userName, startedAt, endedAt, durationSec}
+function getTimeSessions(colId, creativeNameFilter) {
+  if (!colId) return [];
+  var c = (window._currentRawCV || []).find(function(x){ return x.id === colId; });
+  if (!c || !c.value) return [];
+  try {
+    var v = JSON.parse(c.value);
+    if (!v || !Array.isArray(v.additional_value)) return [];
+    return v.additional_value.map(function(session) {
+      var userId = session.started_user_id || session.manually_entered_start_user_id || null;
+      var name = userId ? userNameById(userId) : '';
+      var started = parseInt(session.started_at || 0, 10);
+      var ended = parseInt(session.ended_at || 0, 10);
+      return {
+        userId: userId,
+        userName: name,
+        startedAt: started ? new Date(started * 1000) : null,
+        endedAt: ended ? new Date(ended * 1000) : null,
+        durationSec: ended && started ? (ended - started) : 0
+      };
+    }).filter(function(s){ return s.durationSec > 0; });
+  } catch(e) {
+    console.warn('time session parse error', e);
+    return [];
+  }
+}
+
 // Determine Andrew's rate for a specific item (stored per-item in a column or asked via UI)
 function getAndrewRateForItem(item) {
   if (!item.andrewRole) return 380; // default
@@ -288,6 +331,7 @@ var AUTO_ESTIMATES = {
 // ── State ───────────────────────────────────────────────────
 var allBoardCols = [];
 var allItems = [];
+var allUsers = [];
 var colMap = {};
 var saveTimers = {};
 var currentFilter = 'all';
@@ -325,6 +369,12 @@ function fetchColumns() {
       if (!cols || !cols.length) throw new Error('Board not found');
       return cols;
     });
+}
+
+function fetchUsers() {
+  return api('{ users(limit:200) { id name } }')
+    .then(function(d) { return (d && d.users) || []; })
+    .catch(function(){ return []; });
 }
 
 function fetchItems() {
@@ -673,6 +723,7 @@ function closePanel() {
 }
 
 function renderDetail(item) {
+  window._currentRawCV = item._cv || [];
   $('panel-title').textContent = item.name;
   var pb = $('panel-body');
   pb.innerHTML = '';
@@ -718,7 +769,7 @@ function renderDetail(item) {
   }
 
   html += '<div class="field-grid">';
-  html += field('Budget', fmt$(item.budget), 'muted');
+  html += fieldInput('Budget ($)', item.budget || '', 'budget', item.id, '$', 'Updates Monday on change');
   html += field('Content type', item.contentType || '—', item.contentType ? '' : 'muted');
 
   var estHint = '';
@@ -744,9 +795,17 @@ function renderDetail(item) {
   }
   html += '</div>';
 
-  // Creatives
+  // Creative assignment dropdowns
   html += '<div class="card">';
-  html += '<div class="card-title">Creatives &amp; Hours <span class="badge badge-' + liveHealth + '">' + liveLabel + '</span></div>';
+  html += '<div class="card-title">Creative Assignments</div>';
+  html += '<div class="field-grid">';
+  html += creativePicker('Creative 1', item.creative1, 1, item.id);
+  html += creativePicker('Creative 2', item.creative2, 2, item.id);
+  html += '</div></div>';
+
+  // Creatives & Hours
+  html += '<div class="card">';
+  html += '<div class="card-title">Hours &amp; Cost <span class="badge badge-' + liveHealth + '">' + liveLabel + '</span></div>';
   html += '<div class="creative-list">';
   if (item.creative1) html += creativeRow(1, item.creative1, item._c1Rate, item.budget > 0 ? item.budget / item._c1Rate : null, item._c1Set, item.creative1Tracked, item.id);
   if (item.creative2) html += creativeRow(2, item.creative2, item._c2Rate, item.budget > 0 ? item.budget / item._c2Rate : null, item._c2Set, item.creative2Tracked, item.id);
@@ -756,6 +815,23 @@ function renderDetail(item) {
   }
   html += '</div></div>';
 
+  // Time sessions
+  var c1Sessions = getTimeSessions(colMap.creative1Tracked);
+  var c2Sessions = getTimeSessions(colMap.creative2Tracked);
+  if (c1Sessions.length || c2Sessions.length) {
+    html += '<div class="card">';
+    html += '<div class="card-title">Logged Time</div>';
+    if (c1Sessions.length) {
+      html += '<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:6px;">' + esc(item.creative1 || 'Creative 1') + '</div>';
+      html += renderSessionList(c1Sessions);
+    }
+    if (c2Sessions.length) {
+      html += '<div style="font-size:11px;font-weight:700;color:#475569;margin:12px 0 6px;">' + esc(item.creative2 || 'Creative 2') + '</div>';
+      html += renderSessionList(c2Sessions);
+    }
+    html += '</div>';
+  }
+
   pb.innerHTML = html;
 
   // Wire inputs
@@ -764,6 +840,16 @@ function renderDetail(item) {
       var colKey = inp.getAttribute('data-col');
       var id = inp.getAttribute('data-item');
       saveField(id, colKey, inp.value.trim());
+    });
+  });
+
+  // Wire creative picker dropdowns (people columns)
+  pb.querySelectorAll('select[data-creative-picker]').forEach(function(sel) {
+    sel.addEventListener('change', function() {
+      var colKey = sel.getAttribute('data-creative-picker');
+      var id = sel.getAttribute('data-item');
+      var userId = sel.value; // either a user ID, or '' for none, or a name string (if unknown)
+      savePersonField(id, colKey, userId);
     });
   });
 
@@ -823,6 +909,55 @@ function fieldInput(label, value, colKey, itemId, suffix, hint) {
   return '<div class="field"><div class="field-label">' + esc(label) + '</div>' +
     '<input type="number" step="0.25" min="0" value="' + esc(v) + '" data-col="' + colKey + '" data-item="' + itemId + '" placeholder="' + esc(suffix) + '">' +
     (hint ? '<div class="field-hint">' + esc(hint) + '</div>' : '') + '</div>';
+}
+
+function creativePicker(label, currentValue, n, itemId) {
+  var creatives = getCreativeUsers();
+  var colKey = 'creative' + n;
+  // Build options: blank + current (if not in list) + all creatives
+  var opts = '<option value="">— none —</option>';
+  var seen = {};
+  // include current even if not a known creative
+  if (currentValue && !creatives.find(function(u){ return u.name === currentValue; })) {
+    opts += '<option value="' + esc(currentValue) + '" selected>' + esc(currentValue) + ' (unknown rate)</option>';
+    seen[currentValue] = true;
+  }
+  creatives.forEach(function(u) {
+    if (seen[u.name]) return;
+    var selected = u.name === currentValue ? ' selected' : '';
+    opts += '<option value="' + esc(u.id) + '"' + selected + '>' + esc(u.name) + '</option>';
+  });
+  return '<div class="field"><div class="field-label">' + esc(label) + '</div>' +
+    '<select data-creative-picker="' + colKey + '" data-item="' + itemId + '" style="height:34px;padding:0 10px;border:1px solid #e2e8f0;border-radius:5px;font-size:12px;font-family:inherit;color:#1e293b;background:#fff;outline:none;font-weight:600;">' + opts + '</select>' +
+    '</div>';
+}
+
+function renderSessionList(sessions) {
+  // sort newest first
+  sessions.sort(function(a,b){ return (b.startedAt||0) - (a.startedAt||0); });
+  var total = sessions.reduce(function(s,x){ return s + x.durationSec; }, 0);
+  var html = '<div style="display:flex;flex-direction:column;gap:4px;">';
+  sessions.forEach(function(s) {
+    var start = s.startedAt ? s.startedAt.toLocaleString('en-AU', {day:'numeric', month:'short', hour:'numeric', minute:'2-digit', hour12:true}) : '—';
+    var dur = formatDuration(s.durationSec);
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;background:#f8fafc;border-radius:5px;padding:6px 10px;font-size:11px;">' +
+      '<span style="color:#475569;">' + esc(start) + '</span>' +
+      (s.userName ? '<span style="color:#94a3b8;font-size:10px;flex:1;margin-left:10px;">' + esc(s.userName) + '</span>' : '') +
+      '<span style="font-weight:600;color:#0f172a;font-variant-numeric:tabular-nums;">' + dur + '</span>' +
+      '</div>';
+  });
+  html += '<div style="display:flex;justify-content:space-between;padding:6px 10px 0;font-size:11px;font-weight:700;color:#0f172a;">' +
+    '<span>Total</span><span>' + formatDuration(total) + ' (' + fmtH(total/3600, 2) + ')</span></div>';
+  html += '</div>';
+  return html;
+}
+
+function formatDuration(seconds) {
+  if (!seconds) return '0m';
+  var h = Math.floor(seconds / 3600);
+  var m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return h + 'h ' + m + 'm';
+  return m + 'm';
 }
 
 function creativeRow(n, name, rate, maxHours, setHours, trackedHours, itemId) {
@@ -885,6 +1020,28 @@ function saveField(itemId, colKey, value) {
   }, 400);
 }
 
+// Save a person to a people column (different value format required by monday)
+function savePersonField(itemId, colKey, userId) {
+  var colId = colMap[colKey];
+  if (!colId) { toast('Column "' + colKey + '" not found', true); return; }
+  toast('Saving…');
+  var valueObj = userId
+    ? { personsAndTeams: [{ id: parseInt(userId, 10), kind: 'person' }] }
+    : { personsAndTeams: [] };
+  var valueStr = JSON.stringify(valueObj);
+  api('mutation { change_column_value(item_id:' + itemId + ', board_id:' + CONFIG.boardId + ', column_id:"' + colId + '", value:' + JSON.stringify(valueStr) + ') { id } }')
+    .then(function() { toast('Saved'); return fetchSingleItem(itemId); })
+    .then(function(raw) {
+      if (!raw) return;
+      var parsed = parseItem(raw);
+      var idx = allItems.findIndex(function(i){ return i.id === itemId; });
+      if (idx >= 0) allItems[idx] = parsed;
+      renderDetail(parsed);
+      renderBoard();
+    })
+    .catch(function(e) { console.error(e); toast('Save failed: ' + e.message, true); });
+}
+
 function toast(msg, isError) {
   var t = $('save-indicator');
   t.textContent = msg;
@@ -907,6 +1064,11 @@ function boot() {
       allBoardCols = cols;
       colMap = mapCols(cols);
       console.log('[colMap]', colMap);
+      setMsg('Loading users...');
+      return fetchUsers();
+    })
+    .then(function(users) {
+      allUsers = users;
       setMsg('Loading jobs...');
       return fetchItems();
     })
