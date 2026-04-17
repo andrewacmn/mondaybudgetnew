@@ -263,12 +263,41 @@ function userNameById(id) {
 function getTimeSessions(colId, creativeNameFilter) {
   if (!colId) return [];
   var c = (window._currentRawCV || []).find(function(x){ return x.id === colId; });
-  if (!c || !c.value) return [];
+  if (!c) return [];
+  console.log('[time col ' + colId + '] value:', c.value, 'text:', c.text);
+  if (!c.value) return [];
   try {
     var v = JSON.parse(c.value);
-    if (!v || !Array.isArray(v.additional_value)) return [];
-    return v.additional_value.map(function(session) {
-      var userId = session.started_user_id || session.manually_entered_start_user_id || null;
+    console.log('[time col ' + colId + '] parsed:', v);
+
+    // Monday duration column can structure sessions in several places
+    var sessions = [];
+
+    // Try: additional_value array
+    if (v && Array.isArray(v.additional_value)) {
+      sessions = v.additional_value;
+    }
+    // Try: sessions array
+    else if (v && Array.isArray(v.sessions)) {
+      sessions = v.sessions;
+    }
+    // Try: history array
+    else if (v && Array.isArray(v.history)) {
+      sessions = v.history;
+    }
+    // If there's a running_session, add it
+    if (v && v.running_session && v.running_session.started_at) {
+      sessions = sessions.concat([{
+        started_at: v.running_session.started_at,
+        ended_at: Math.floor(Date.now() / 1000),
+        started_user_id: v.running_session.started_user_id
+      }]);
+    }
+
+    if (!sessions.length) return [];
+
+    return sessions.map(function(session) {
+      var userId = session.started_user_id || session.manually_entered_start_user_id || session.user_id || null;
       var name = userId ? userNameById(userId) : '';
       var started = parseInt(session.started_at || 0, 10);
       var ended = parseInt(session.ended_at || 0, 10);
@@ -822,16 +851,25 @@ function renderDetail(item) {
   // Time sessions
   var c1Sessions = getTimeSessions(colMap.creative1Tracked);
   var c2Sessions = getTimeSessions(colMap.creative2Tracked);
-  if (c1Sessions.length || c2Sessions.length) {
+  var hasAnyTracked = (item.creative1Tracked || 0) > 0 || (item.creative2Tracked || 0) > 0;
+  if (c1Sessions.length || c2Sessions.length || hasAnyTracked) {
     html += '<div class="card">';
     html += '<div class="card-title">Logged Time</div>';
-    if (c1Sessions.length) {
-      html += '<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:6px;">' + esc(item.creative1 || 'Creative 1') + '</div>';
-      html += renderSessionList(c1Sessions);
+    if (item.creative1Tracked > 0 || c1Sessions.length) {
+      html += '<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:6px;">' + esc(item.creative1 || 'Creative 1') + ' <span style="color:#94a3b8;font-weight:500;">— ' + fmtH(item.creative1Tracked || 0, 2) + ' total</span></div>';
+      if (c1Sessions.length) {
+        html += renderSessionList(c1Sessions);
+      } else if (item.creative1Tracked > 0) {
+        html += '<div style="background:#f8fafc;border-radius:5px;padding:8px 10px;font-size:11px;color:#94a3b8;">Time tracked but no session breakdown available. Check console for raw data.</div>';
+      }
     }
-    if (c2Sessions.length) {
-      html += '<div style="font-size:11px;font-weight:700;color:#475569;margin:12px 0 6px;">' + esc(item.creative2 || 'Creative 2') + '</div>';
-      html += renderSessionList(c2Sessions);
+    if (item.creative2Tracked > 0 || c2Sessions.length) {
+      html += '<div style="font-size:11px;font-weight:700;color:#475569;margin:12px 0 6px;">' + esc(item.creative2 || 'Creative 2') + ' <span style="color:#94a3b8;font-weight:500;">— ' + fmtH(item.creative2Tracked || 0, 2) + ' total</span></div>';
+      if (c2Sessions.length) {
+        html += renderSessionList(c2Sessions);
+      } else if (item.creative2Tracked > 0) {
+        html += '<div style="background:#f8fafc;border-radius:5px;padding:8px 10px;font-size:11px;color:#94a3b8;">Time tracked but no session breakdown available. Check console for raw data.</div>';
+      }
     }
     html += '</div>';
   }
@@ -918,17 +956,19 @@ function fieldInput(label, value, colKey, itemId, suffix, hint) {
 function creativePicker(label, currentValue, n, itemId) {
   var creatives = getCreativeUsers();
   var colKey = 'creative' + n;
-  // Build options: blank + current (if not in list) + all creatives
+  // Match current value by first name (case insensitive)
+  var currentFirstName = (currentValue || '').trim().split(/\s+/)[0].toUpperCase();
+  var matchedUser = currentFirstName ? creatives.find(function(u) {
+    return (u.name || '').trim().split(/\s+/)[0].toUpperCase() === currentFirstName;
+  }) : null;
+
   var opts = '<option value="">— none —</option>';
-  var seen = {};
-  // include current even if not a known creative
-  if (currentValue && !creatives.find(function(u){ return u.name === currentValue; })) {
-    opts += '<option value="' + esc(currentValue) + '" selected>' + esc(currentValue) + ' (unknown rate)</option>';
-    seen[currentValue] = true;
+  // If current value exists but no user matched, show it as a fallback option
+  if (currentValue && !matchedUser) {
+    opts += '<option value="' + esc(currentValue) + '" selected>' + esc(currentValue) + ' (not in rate card)</option>';
   }
   creatives.forEach(function(u) {
-    if (seen[u.name]) return;
-    var selected = u.name === currentValue ? ' selected' : '';
+    var selected = (matchedUser && matchedUser.id === u.id) ? ' selected' : '';
     opts += '<option value="' + esc(u.id) + '"' + selected + '>' + esc(u.name) + '</option>';
   });
   return '<div class="field"><div class="field-label">' + esc(label) + '</div>' +
