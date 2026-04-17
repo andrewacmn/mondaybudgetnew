@@ -30,6 +30,9 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f1f5f9;color:#1e293b;m
 .filter-pill:hover{background:#f8fafc}
 .filter-pill.active{background:#0f172a;color:#fff;border-color:#0f172a}
 .filter-pill .count{font-size:10px;opacity:.7}
+.dropdown-filter{height:28px;padding:0 8px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;font-size:11px;font-family:inherit;color:#475569;cursor:pointer;outline:none;max-width:160px}
+.dropdown-filter:focus{border-color:#3b82f6}
+.dropdown-filter.active{background:#0f172a;color:#fff;border-color:#0f172a}
 #totals{display:flex;gap:6px;align-items:center}
 .total-chip{background:#f1f5f9;padding:5px 10px;border-radius:5px;font-size:11px;color:#475569;display:flex;gap:6px;align-items:center}
 .total-chip b{color:#0f172a;font-weight:700}
@@ -156,8 +159,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f1f5f9;color:#1e293b;m
 
 <script>
 var CONFIG = {
-  apiToken: 'YOUR_API_TOKEN_HERE',
-  boardId:  'YOUR_BOARD_ID_HERE'
+  apiToken: 'eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjQ1NjA4NTcwMSwiYWFpIjoxMSwidWlkIjo2OTYyOTM1MSwiaWFkIjoiMjAyNS0wMS0xMFQwNjoyMTozMi4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6NjQzMTgxMCwicmduIjoidXNlMSJ9.CaVqnG51LtzKP4MTxXCflpqaZA64n0TvS6DzmK-7R84',
+  boardId:  '18391057818'
 };
 </script>
 
@@ -185,6 +188,8 @@ var CONFIG = {
       <button class="filter-pill" data-filter="warn">Watch <span class="count" id="c-warn">0</span></button>
       <button class="filter-pill" data-filter="good">On track <span class="count" id="c-good">0</span></button>
       <button class="filter-pill" data-filter="unset">No budget <span class="count" id="c-unset">0</span></button>
+      <select id="filter-production" class="dropdown-filter"><option value="">All productions</option></select>
+      <select id="filter-asset-type" class="dropdown-filter"><option value="">All asset types</option></select>
     </div>
     <div id="totals"></div>
   </div>
@@ -217,7 +222,8 @@ var CREATIVE_RATES = {
 };
 
 // Content types where Andrew does copywriting (rate = 230 instead of 380)
-var ANDREW_COPY_TYPES = ['TVC', 'Radio Ad'];
+// Matches actual Monday asset type values
+var ANDREW_COPY_TYPES = ['TVC/BVOD', 'Radio Ad'];
 
 // Match creative name (could be "Andrew Brentnall", "Margo Iredale" etc.) to rate
 function getRateFor(fullName, contentType) {
@@ -281,6 +287,8 @@ var colMap = {};
 var saveTimers = {};
 var currentFilter = 'all';
 var searchTerm = '';
+var productionFilter = '';
+var assetTypeFilter = '';
 
 function showError(title, msg) {
   $('loading').style.display = 'none';
@@ -346,6 +354,7 @@ function mapCols(cols) {
     creative1:        id(find([/^creative\s*1$/i])),
     creative2:        id(find([/^creative\s*2$/i])),
     contentType:      id(find([/^asset\s*type$/i, /^content\s*type$/i, /^creative\s*type$/i])),
+    production:       id(find([/^production$/i])),
     estimateHours:    id(find([/^estimated?\s*hours\s*for\s*task$/i, /^estimated?\s*hours$/i])),
     overrideHours:    id(find([/^override\s*estimated?\s*hours$/i, /override.*hours/i])),
     creative1Set:     id(find([/^creative\s*1\s*set\s*hours$/i])),
@@ -406,6 +415,7 @@ function parseItem(raw) {
     creative1:        getText(colMap.creative1),
     creative2:        getText(colMap.creative2),
     contentType:      getText(colMap.contentType),
+    production:       getText(colMap.production),
     estimateHours:    getNumOrNull(colMap.estimateHours),
     overrideHours:    getNumOrNull(colMap.overrideHours),
     creative1Set:     getNumOrNull(colMap.creative1Set),
@@ -511,6 +521,7 @@ function esc(s) {
 
 // ── Render board view ──────────────────────────────────────
 function renderBoard() {
+  populateFilterDropdowns();
   var grid = $('grid');
   grid.innerHTML = '';
 
@@ -538,9 +549,11 @@ function renderBoard() {
 
   // Apply filter + search
   var shown = allItems.filter(function(it) {
-    if (currentFilter === 'unset') return !it.budget || it.budget <= 0;
-    if (currentFilter !== 'all' && it._health !== currentFilter) return false;
+    if (currentFilter === 'unset') { if (it.budget && it.budget > 0) return false; }
+    else if (currentFilter !== 'all' && it._health !== currentFilter) return false;
     if (searchTerm && !it.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+    if (productionFilter && it.production !== productionFilter) return false;
+    if (assetTypeFilter && it.contentType !== assetTypeFilter) return false;
     return true;
   });
 
@@ -562,6 +575,27 @@ function renderBoard() {
   });
 }
 
+function populateFilterDropdowns() {
+  var prods = {};
+  var types = {};
+  allItems.forEach(function(it) {
+    if (it.production) prods[it.production] = true;
+    if (it.contentType) types[it.contentType] = true;
+  });
+  var prodSel = $('filter-production');
+  var typeSel = $('filter-asset-type');
+  prodSel.innerHTML = '<option value="">All productions</option>' +
+    Object.keys(prods).sort().map(function(p) {
+      return '<option value="' + esc(p) + '"' + (p === productionFilter ? ' selected' : '') + '>' + esc(p) + '</option>';
+    }).join('');
+  typeSel.innerHTML = '<option value="">All asset types</option>' +
+    Object.keys(types).sort().map(function(t) {
+      return '<option value="' + esc(t) + '"' + (t === assetTypeFilter ? ' selected' : '') + '>' + esc(t) + '</option>';
+    }).join('');
+  prodSel.classList.toggle('active', !!productionFilter);
+  typeSel.classList.toggle('active', !!assetTypeFilter);
+}
+
 function buildJobCard(item) {
   var card = document.createElement('div');
   card.className = 'job-card border-' + item._health;
@@ -580,8 +614,10 @@ function buildJobCard(item) {
   html += '<div class="job-status ' + item._health + '">' + statusLabel + '</div>';
   html += '</div>';
 
-  if (item.contentType) {
-    html += '<div class="job-meta"><span class="type">' + esc(item.contentType) + '</span>';
+  if (item.contentType || item.production) {
+    html += '<div class="job-meta">';
+    if (item.production) html += '<span class="type" style="color:#3b82f6">' + esc(item.production) + '</span>';
+    if (item.contentType) html += '<span class="type">' + esc(item.contentType) + '</span>';
     if (item._effEstimate !== null) html += '<span>' + fmtH(item._effEstimate) + ' est.</span>';
     html += '</div>';
   }
@@ -892,6 +928,14 @@ document.querySelectorAll('.filter-pill').forEach(function(btn) {
 });
 $('search').addEventListener('input', function(e) {
   searchTerm = e.target.value;
+  renderBoard();
+});
+$('filter-production').addEventListener('change', function(e) {
+  productionFilter = e.target.value;
+  renderBoard();
+});
+$('filter-asset-type').addEventListener('change', function(e) {
+  assetTypeFilter = e.target.value;
   renderBoard();
 });
 $('panel-overlay').addEventListener('click', closePanel);
