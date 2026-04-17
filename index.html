@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Budget Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',system-ui,sans-serif;background:#f1f5f9;color:#1e293b;min-height:100vh;padding:16px}
+
+/* Loading / error */
+#loading{position:fixed;inset:0;background:#f8fafc;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:900}
+.spinner{width:26px;height:26px;border:3px solid #e2e8f0;border-top-color:#3b82f6;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#error{display:none;padding:24px;text-align:center;max-width:500px;margin:40px auto;background:#fef2f2;border:1px solid #fecaca;border-radius:8px}
+#error h2{font-size:15px;color:#991b1b;margin-bottom:8px}
+#error p{font-size:12px;color:#64748b;line-height:1.5}
+
+/* Main layout */
+.container{max-width:900px;margin:0 auto;display:none;flex-direction:column;gap:16px}
+
+/* Header: item picker */
+.header{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px}
+.header-label{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.item-picker{width:100%;height:40px;padding:0 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px;font-family:inherit;color:#1e293b;background:#fff;outline:none;cursor:pointer;font-weight:500}
+.item-picker:focus{border-color:#3b82f6}
+
+/* Summary strip */
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.sum-card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px}
+.sum-label{font-size:9px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.sum-value{font-size:18px;font-weight:700;color:#0f172a;line-height:1.1}
+.sum-sub{font-size:10px;color:#94a3b8;margin-top:2px}
+.sum-card.good{border-color:#86efac;background:#f0fdf4}
+.sum-card.good .sum-value{color:#15803d}
+.sum-card.warn{border-color:#fdba74;background:#fff7ed}
+.sum-card.warn .sum-value{color:#c2410c}
+.sum-card.bad{border-color:#fca5a5;background:#fef2f2}
+.sum-card.bad .sum-value{color:#b91c1c}
+
+/* Quote section */
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:18px 20px}
+.card-title{font-size:13px;font-weight:700;color:#0f172a;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between}
+.card-title .badge{font-size:10px;font-weight:600;padding:3px 8px;border-radius:4px;text-transform:uppercase;letter-spacing:.3px}
+.badge-good{background:#dcfce7;color:#15803d}
+.badge-warn{background:#ffedd5;color:#c2410c}
+.badge-bad{background:#fee2e2;color:#b91c1c}
+.badge-neutral{background:#f1f5f9;color:#64748b}
+
+/* Field grid */
+.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+.field-grid.full{grid-template-columns:1fr}
+.field{display:flex;flex-direction:column;gap:4px}
+.field-label{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px}
+.field-value{font-size:14px;font-weight:600;color:#1e293b}
+.field-value.big{font-size:16px}
+.field-value.muted{color:#94a3b8;font-weight:500}
+.field input, .field select{height:34px;padding:0 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;font-family:inherit;color:#1e293b;background:#fff;outline:none;font-weight:600}
+.field input:focus, .field select:focus{border-color:#3b82f6}
+.field input[type=number]{text-align:right}
+.field-hint{font-size:10px;color:#94a3b8;margin-top:2px}
+
+/* Creative rows */
+.creative-list{display:flex;flex-direction:column;gap:10px}
+.creative-row{border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;background:#fafbfc}
+.creative-row.combined{background:#f0f9ff;border-color:#bae6fd}
+.creative-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.creative-name{font-size:13px;font-weight:700;color:#0f172a}
+.creative-rate{font-size:11px;color:#64748b;font-weight:500}
+.creative-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.creative-cell{display:flex;flex-direction:column;gap:3px}
+.cell-label{font-size:9px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.3px}
+.cell-value{font-size:13px;font-weight:600;color:#1e293b}
+.cell-value.hours{font-variant-numeric:tabular-nums}
+.cell-value input{height:30px;padding:0 8px;border:1px solid #e2e8f0;border-radius:5px;font-size:12px;font-family:inherit;color:#1e293b;background:#fff;outline:none;font-weight:600;text-align:right;width:100%}
+.cell-value input:focus{border-color:#3b82f6}
+
+/* Progress bars */
+.progress-wrap{margin-top:10px}
+.progress-label{display:flex;justify-content:space-between;align-items:baseline;font-size:10px;color:#64748b;margin-bottom:4px}
+.progress-label strong{font-size:11px;color:#0f172a}
+.progress-bar{height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden;position:relative}
+.progress-fill{height:100%;border-radius:4px;transition:width .3s}
+.progress-fill.good{background:linear-gradient(90deg,#22c55e,#16a34a)}
+.progress-fill.warn{background:linear-gradient(90deg,#f59e0b,#d97706)}
+.progress-fill.bad{background:linear-gradient(90deg,#ef4444,#dc2626)}
+.progress-mark{position:absolute;top:0;bottom:0;width:2px;background:#0f172a;opacity:.3}
+
+/* Save status */
+#save-indicator{position:fixed;bottom:16px;right:16px;background:#0f172a;color:#fff;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:500;opacity:0;transition:opacity .2s;pointer-events:none;z-index:500}
+#save-indicator.show{opacity:1}
+#save-indicator.error{background:#dc2626}
+
+/* Utility */
+.meta-row{display:flex;gap:18px;flex-wrap:wrap;font-size:11px;color:#64748b;padding-top:8px;border-top:1px solid #f1f5f9;margin-top:12px}
+.meta-row b{color:#0f172a;font-weight:600}
+.empty-state{text-align:center;padding:40px 20px;color:#94a3b8;font-size:13px}
+
+@media (max-width: 640px) {
+  .summary{grid-template-columns:repeat(2,1fr)}
+  .field-grid{grid-template-columns:1fr}
+  .creative-grid{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+<body>
+
+<script>
+var CONFIG = {
+  apiToken: 'eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjQ1NjA4NTcwMSwiYWFpIjoxMSwidWlkIjo2OTYyOTM1MSwiaWFkIjoiMjAyNS0wMS0xMFQwNjoyMTozMi4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6NjQzMTgxMCwicmduIjoidXNlMSJ9.CaVqnG51LtzKP4MTxXCflpqaZA64n0TvS6DzmK-7R84',
+  boardId:  '18391057818'
+};
+</script>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <div style="font-size:14px;font-weight:700;color:#0f172a">Budget Tracker</div>
+  <div style="font-size:11px;color:#94a3b8" id="load-msg">Connecting...</div>
+</div>
+
+<div id="error">
+  <h2 id="err-title">Error</h2>
+  <p id="err-msg"></p>
+</div>
+
+<div class="container" id="app">
+  <!-- Dynamic content injected here -->
+  <div id="detail"></div>
+</div>
+
+<div id="save-indicator"></div>
+
+<script>
+'use strict';
+var $ = function(id){ return document.getElementById(id); };
+
+// ── Creative rate card ──────────────────────────────────────
+var CREATIVE_RATES = {
+  'MARGO': 195,
+  'LISA': 195,
+  'BRETT': 250,
+  'COPYWRITING': 230,
+  'ANDREW': 380,
+  'LINDSEY': 380
+};
+
+// ── Auto-estimate hours by content type ─────────────────────
+var AUTO_ESTIMATES = {
+  'Billboard': 8,
+  'Branding Materials': 8,
+  'EDM': 4,
+  'Front of House': 8,
+  'Key Art': 8,
+  'Show Flyers': 8,
+  'Programmatic Assets': 4,
+  'Radio Ad': 2,
+  'Social Misc': 2,
+  'Social Static Assets': 2,
+  'Social Video (Under 90 secs)': 3,
+  'Social Video (Over 90 secs)': 5,
+  'Out of Home': 8,
+  'Web Banners/Tiles': 4,
+  'Vox Pops': 8
+};
+
+// ── State ───────────────────────────────────────────────────
+var allBoardCols = [];
+var allItems = [];
+var selectedItem = null;
+var colMap = {};
+var saveTimers = {};
+
+function showError(title, msg) {
+  $('loading').style.display = 'none';
+  $('error').style.display = 'block';
+  $('err-title').textContent = title;
+  $('err-msg').textContent = msg;
+}
+function setMsg(t) { $('load-msg').textContent = t; }
+
+// ── API ─────────────────────────────────────────────────────
+function api(query) {
+  return fetch('https://api.monday.com/v2', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': CONFIG.apiToken, 'API-Version': '2024-01' },
+    body: JSON.stringify({ query: query })
+  }).then(function(r) {
+    if (!r.ok) throw new Error('monday.com HTTP ' + r.status);
+    return r.json();
+  }).then(function(j) {
+    if (j.errors && j.errors.length) throw new Error(j.errors[0].message);
+    return j.data;
+  });
+}
+
+function fetchColumns() {
+  return api('{ boards(ids:[' + CONFIG.boardId + ']) { columns { id title type } } }')
+    .then(function(d) {
+      var cols = d && d.boards && d.boards[0] && d.boards[0].columns;
+      if (!cols || !cols.length) throw new Error('Board not found');
+      return cols;
+    });
+}
+
+function fetchItems() {
+  return api('{ boards(ids:[' + CONFIG.boardId + ']) { items_page(limit:500) { items { id name column_values { id value text } } } } }')
+    .then(function(d) { return (d && d.boards && d.boards[0] && d.boards[0].items_page && d.boards[0].items_page.items) || []; });
+}
+
+function updateCol(itemId, columnId, value) {
+  var v = typeof value === 'string' ? JSON.stringify(value) : JSON.stringify(String(value));
+  return api('mutation { change_simple_column_value(item_id:' + itemId + ', board_id:' + CONFIG.boardId + ', column_id:"' + columnId + '", value:' + v + ') { id } }');
+}
+
+// ── Column mapping (flexible title matching) ───────────────
+function mapCols(cols) {
+  var find = function(patterns) {
+    for (var i = 0; i < patterns.length; i++) {
+      var p = patterns[i];
+      var c = cols.find(function(col) { return p.test(col.title); });
+      if (c) return c.id;
+    }
+    return '';
+  };
+  return {
+    budget:            find([/^budget$/i, /total.*budget/i, /^budget\s/i]),
+    creative1:         find([/creative\s*1|^creative$/i]),
+    creative2:         find([/creative\s*2/i]),
+    contentType:       find([/content.?type|creative.?type|job.?type/i]),
+    estimateHours:     find([/^estimated?\s*hours|auto.*estimate/i]),
+    overrideHours:     find([/override.*hours|manual.*hours|custom.*hours/i]),
+    creative1Set:      find([/creative\s*1.*set.*hours|creative\s*1\s*hours$/i, /set.*hours.*1/i]),
+    creative2Set:      find([/creative\s*2.*set.*hours|creative\s*2\s*hours$/i, /set.*hours.*2/i]),
+    timeTracking:      find([/^time.?track|actual.*time|tracked.*time/i]),
+    creative1Tracked:  find([/creative\s*1.*tracked|tracked.*1/i]),
+    creative2Tracked:  find([/creative\s*2.*tracked|tracked.*2/i])
+  };
+}
+
+// ── Parse item from API response ───────────────────────────
+function parseItem(raw) {
+  var out = { id: raw.id, name: raw.name, _cv: raw.column_values || [] };
+  var getText = function(colId) {
+    if (!colId) return '';
+    var c = out._cv.find(function(cv){ return cv.id === colId; });
+    return c ? (c.text || '').trim() : '';
+  };
+  var getNum = function(colId) {
+    var t = getText(colId);
+    var n = parseFloat(t);
+    return isNaN(n) ? 0 : n;
+  };
+  var getNumOrNull = function(colId) {
+    var t = getText(colId);
+    if (!t) return null;
+    var n = parseFloat(t);
+    return isNaN(n) ? null : n;
+  };
+
+  out.budget          = getNum(colMap.budget);
+  out.creative1       = getText(colMap.creative1);
+  out.creative2       = getText(colMap.creative2);
+  out.contentType     = getText(colMap.contentType);
+  out.estimateHours   = getNumOrNull(colMap.estimateHours);
+  out.overrideHours   = getNumOrNull(colMap.overrideHours);
+  out.creative1Set    = getNumOrNull(colMap.creative1Set);
+  out.creative2Set    = getNumOrNull(colMap.creative2Set);
+
+  // Time tracking: need to handle the time tracking column type specifically
+  out.creative1Tracked = getTimeTrackedHours(colMap.creative1Tracked) || getNumOrNull(colMap.creative1Tracked);
+  out.creative2Tracked = getTimeTrackedHours(colMap.creative2Tracked) || getNumOrNull(colMap.creative2Tracked);
+  out.totalTracked     = getTimeTrackedHours(colMap.timeTracking) || getNumOrNull(colMap.timeTracking);
+
+  // Auto-estimate fallback from content type
+  if (out.estimateHours === null && out.contentType && AUTO_ESTIMATES[out.contentType]) {
+    out.estimateHours = AUTO_ESTIMATES[out.contentType];
+  }
+
+  return out;
+}
+
+// Extract hours from monday time-tracking column (stores duration in seconds)
+function getTimeTrackedHours(colId) {
+  if (!colId) return null;
+  var c = (selectedItem && selectedItem._cv) ? selectedItem._cv.find(function(cv){ return cv.id === colId; }) : null;
+  if (!c || !c.value) return null;
+  try {
+    var v = JSON.parse(c.value);
+    // Time tracking column has running_session or similar; total duration usually in seconds
+    if (v && typeof v === 'object') {
+      if (typeof v.duration === 'number') return v.duration / 3600;
+      if (Array.isArray(v.additional_value)) {
+        var total = v.additional_value.reduce(function(sum, e) {
+          return sum + (parseInt(e.ended_at||0, 10) - parseInt(e.started_at||0, 10));
+        }, 0);
+        return total / 3600;
+      }
+    }
+  } catch(e) {}
+  // Fallback: parse text like "3:45" or "3h 45m"
+  var t = (c.text || '').trim();
+  var hm = t.match(/^(\d+):(\d+)/);
+  if (hm) return parseInt(hm[1], 10) + parseInt(hm[2], 10) / 60;
+  return null;
+}
+
+// ── Render ─────────────────────────────────────────────────
+// ── Get item ID from URL or monday.com postMessage context ──
+function getItemIdFromUrl() {
+  var params = new URLSearchParams(window.location.search);
+  console.log('[URL params]', Array.from(params.entries()));
+  var id = params.get('itemId') || params.get('item_id') || params.get('pulseId') || params.get('pulse_id') || '';
+  if (id && (id.indexOf('{') !== -1 || id.indexOf('}') !== -1)) return '';
+  if (id && !/^\d+$/.test(id)) return '';
+  return id;
+}
+
+// monday.com sends context to embedded iframes via postMessage
+function getItemIdFromMonday() {
+  return new Promise(function(resolve) {
+    // Timeout fallback — if monday doesn't respond in 2s, give up
+    var timer = setTimeout(function() { resolve(''); }, 2000);
+
+    var handler = function(event) {
+      try {
+        var data = event.data;
+        console.log('[monday message]', data);
+        // monday sends context in several possible shapes
+        if (data && typeof data === 'object') {
+          var id = data.itemId || data.pulseId ||
+                   (data.data && (data.data.itemId || data.data.pulseId)) ||
+                   (data.payload && (data.payload.itemId || data.payload.pulseId));
+          if (id) {
+            clearTimeout(timer);
+            window.removeEventListener('message', handler);
+            resolve(String(id));
+          }
+        }
+      } catch(e) {}
+    };
+    window.addEventListener('message', handler);
+
+    // Ask monday for context (various API shapes used over the years)
+    try { window.parent.postMessage({ type: 'getContext' }, '*'); } catch(e) {}
+    try { window.parent.postMessage({ method: 'get', type: 'context' }, '*'); } catch(e) {}
+  });
+}
+
+function fetchSingleItem(itemId) {
+  return api('{ items(ids:[' + itemId + ']) { id name column_values { id value text } } }')
+    .then(function(d) { return (d && d.items && d.items[0]) || null; });
+}
+
+function selectItem(raw) {
+  selectedItem = raw;
+  var item = parseItem(raw);
+  renderDetail(item);
+}
+
+// Format money
+function fmt$(n) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return '$' + Math.round(n).toLocaleString('en-AU');
+}
+function fmtH(n, decimals) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  var d = decimals === undefined ? 1 : decimals;
+  return n.toFixed(d).replace(/\.0$/, '') + ' hr' + (Math.abs(n - 1) < 0.01 ? '' : 's');
+}
+function fmtPct(n) {
+  if (n === null || n === undefined || isNaN(n) || !isFinite(n)) return '—';
+  return Math.round(n) + '%';
+}
+
+function renderDetail(item) {
+  var detail = $('detail');
+  detail.innerHTML = '';
+
+  // Effective estimate = override if set, else estimate
+  var effectiveEstimate = item.overrideHours !== null ? item.overrideHours : item.estimateHours;
+
+  // Rates
+  var c1Rate = CREATIVE_RATES[(item.creative1 || '').toUpperCase()] || 0;
+  var c2Rate = CREATIVE_RATES[(item.creative2 || '').toUpperCase()] || 0;
+
+  // Max hours at budget (how many hours each creative can work within budget)
+  // If 2 creatives, split budget 50/50 by default — but we show both as if using full budget
+  // since the "set hours" is what actually determines cost
+  var c1MaxHours = (c1Rate > 0 && item.budget > 0) ? item.budget / c1Rate : null;
+  var c2MaxHours = (c2Rate > 0 && item.budget > 0) ? item.budget / c2Rate : null;
+
+  // Set hours (what's allocated) — fall back to splitting the estimate
+  var c1Set = item.creative1Set;
+  var c2Set = item.creative2Set;
+  if (c1Set === null && c2Set === null && effectiveEstimate !== null) {
+    if (item.creative1 && item.creative2) {
+      c1Set = effectiveEstimate / 2;
+      c2Set = effectiveEstimate / 2;
+    } else if (item.creative1) {
+      c1Set = effectiveEstimate;
+    }
+  }
+
+  // Cost at set hours
+  var c1SetCost = (c1Set || 0) * c1Rate;
+  var c2SetCost = (c2Set || 0) * c2Rate;
+  var totalSetCost = c1SetCost + c2SetCost;
+
+  // Tracked cost (actual spend so far)
+  var c1TrackedCost = (item.creative1Tracked || 0) * c1Rate;
+  var c2TrackedCost = (item.creative2Tracked || 0) * c2Rate;
+  var totalTrackedCost = c1TrackedCost + c2TrackedCost;
+  // If individual tracked missing, use total tracked & best-effort split by set ratio
+  if (!item.creative1Tracked && !item.creative2Tracked && item.totalTracked) {
+    // Single creative case: all their time
+    if (item.creative1 && !item.creative2) {
+      item.creative1Tracked = item.totalTracked;
+      c1TrackedCost = item.totalTracked * c1Rate;
+      totalTrackedCost = c1TrackedCost;
+    }
+  }
+
+  // Summary variance
+  var estimateCost = totalSetCost;
+  var budgetRemaining = item.budget - totalTrackedCost;
+  var hoursRemaining = effectiveEstimate !== null ? effectiveEstimate - (item.totalTracked || (item.creative1Tracked||0) + (item.creative2Tracked||0)) : null;
+  var totalTrackedHrs = (item.creative1Tracked || 0) + (item.creative2Tracked || 0) || item.totalTracked || 0;
+
+  // Quote health: is the budget enough to cover the estimate?
+  var quoteHealth = 'neutral';
+  var quoteLabel = 'No estimate';
+  if (estimateCost > 0 && item.budget > 0) {
+    var ratio = estimateCost / item.budget;
+    if (ratio <= 0.9) { quoteHealth = 'good'; quoteLabel = 'Under budget'; }
+    else if (ratio <= 1.05) { quoteHealth = 'warn'; quoteLabel = 'At budget'; }
+    else { quoteHealth = 'bad'; quoteLabel = 'Over budget'; }
+  }
+
+  // Live health: are we on track?
+  var liveHealth = 'neutral';
+  var liveLabel = 'Not started';
+  if (totalTrackedCost > 0 && item.budget > 0) {
+    var useRatio = totalTrackedCost / item.budget;
+    if (useRatio <= 0.7) { liveHealth = 'good'; liveLabel = 'On track'; }
+    else if (useRatio <= 0.95) { liveHealth = 'warn'; liveLabel = 'Watch closely'; }
+    else { liveHealth = 'bad'; liveLabel = 'Over budget'; }
+  }
+
+  // ── Build HTML ────────────────────────────────────────────
+  var html = '';
+
+  // Summary strip
+  html += '<div class="summary">';
+  html += sumCard('Budget', fmt$(item.budget), item.contentType || '—', 'neutral');
+  html += sumCard('Est. cost', fmt$(estimateCost), effectiveEstimate !== null ? fmtH(effectiveEstimate) + ' @ set rates' : 'Not set', quoteHealth);
+  html += sumCard('Tracked cost', fmt$(totalTrackedCost), fmtH(totalTrackedHrs, 1) + ' logged', liveHealth);
+  html += sumCard('Remaining', fmt$(budgetRemaining), hoursRemaining !== null ? fmtH(hoursRemaining, 1) + ' left' : '', budgetRemaining < 0 ? 'bad' : budgetRemaining < item.budget * 0.2 ? 'warn' : 'good');
+  html += '</div>';
+
+  // Quote check card
+  html += '<div class="card">';
+  html += '<div class="card-title">Quote Check <span class="badge badge-' + quoteHealth + '">' + quoteLabel + '</span></div>';
+  html += '<div class="field-grid">';
+  html += field('Budget (set in brief)', fmt$(item.budget), 'muted');
+  html += field('Content type', item.contentType || '—', item.contentType ? '' : 'muted');
+  html += fieldInput('Auto-estimate', item.estimateHours, 'estimateHours', item.id, 'hrs', item.contentType && AUTO_ESTIMATES[item.contentType] ? 'From ' + item.contentType + ' (' + AUTO_ESTIMATES[item.contentType] + ' hrs)' : 'Enter manually');
+  html += fieldInput('Override hours', item.overrideHours, 'overrideHours', item.id, 'hrs', 'Leaves blank to use auto-estimate');
+  html += '</div>';
+  if (effectiveEstimate !== null && item.budget > 0) {
+    var pct = (estimateCost / item.budget) * 100;
+    html += '<div class="progress-wrap">';
+    html += '<div class="progress-label"><span>Estimated cost vs budget</span><strong>' + fmt$(estimateCost) + ' / ' + fmt$(item.budget) + ' (' + fmtPct(pct) + ')</strong></div>';
+    html += '<div class="progress-bar"><div class="progress-fill ' + quoteHealth + '" style="width:' + Math.min(pct, 100) + '%"></div></div>';
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // Creatives card
+  html += '<div class="card">';
+  html += '<div class="card-title">Creatives &amp; Hours <span class="badge badge-' + liveHealth + '">' + liveLabel + '</span></div>';
+  html += '<div class="creative-list">';
+  if (item.creative1) {
+    html += creativeRow(1, item.creative1, c1Rate, c1MaxHours, c1Set, item.creative1Tracked, item.id);
+  }
+  if (item.creative2) {
+    html += creativeRow(2, item.creative2, c2Rate, c2MaxHours, c2Set, item.creative2Tracked, item.id);
+  }
+  if (!item.creative1 && !item.creative2) {
+    html += '<div class="empty-state">No creatives assigned yet. Assign in Monday to see hour allocations.</div>';
+  }
+  // Combined total row if 2 creatives
+  if (item.creative1 && item.creative2) {
+    html += combinedRow(c1Set, c2Set, c1SetCost, c2SetCost, item.creative1Tracked, item.creative2Tracked, c1TrackedCost, c2TrackedCost, item.budget);
+  }
+  html += '</div>';
+  html += '</div>';
+
+  detail.innerHTML = html;
+
+  // Wire up inputs
+  detail.querySelectorAll('input[data-col]').forEach(function(inp) {
+    inp.addEventListener('change', function() {
+      var colKey = inp.getAttribute('data-col');
+      var itemId = inp.getAttribute('data-item');
+      var val = inp.value.trim();
+      saveField(itemId, colKey, val);
+    });
+  });
+}
+
+// ── Helpers for HTML building ──────────────────────────────
+function sumCard(label, value, sub, health) {
+  return '<div class="sum-card ' + health + '">' +
+    '<div class="sum-label">' + esc(label) + '</div>' +
+    '<div class="sum-value">' + value + '</div>' +
+    (sub ? '<div class="sum-sub">' + esc(sub) + '</div>' : '') +
+    '</div>';
+}
+
+function field(label, value, cls) {
+  return '<div class="field">' +
+    '<div class="field-label">' + esc(label) + '</div>' +
+    '<div class="field-value ' + (cls||'') + '">' + esc(value) + '</div>' +
+    '</div>';
+}
+
+function fieldInput(label, value, colKey, itemId, suffix, hint) {
+  var v = value === null || value === undefined ? '' : value;
+  return '<div class="field">' +
+    '<div class="field-label">' + esc(label) + '</div>' +
+    '<input type="number" step="0.25" min="0" value="' + esc(v) + '" data-col="' + colKey + '" data-item="' + itemId + '" placeholder="' + esc(suffix) + '">' +
+    (hint ? '<div class="field-hint">' + esc(hint) + '</div>' : '') +
+    '</div>';
+}
+
+function creativeRow(n, name, rate, maxHours, setHours, trackedHours, itemId) {
+  var setCost = (setHours || 0) * rate;
+  var trackedCost = (trackedHours || 0) * rate;
+  var colKey = 'creative' + n + 'Set';
+  return '<div class="creative-row">' +
+    '<div class="creative-head">' +
+      '<div class="creative-name">' + esc(name) + '</div>' +
+      '<div class="creative-rate">$' + rate + '/hr' + (maxHours !== null ? ' · max ' + fmtH(maxHours, 1) + ' at full budget' : '') + '</div>' +
+    '</div>' +
+    '<div class="creative-grid">' +
+      '<div class="creative-cell"><div class="cell-label">Set Hours</div><div class="cell-value"><input type="number" step="0.25" min="0" value="' + esc(setHours === null || setHours === undefined ? '' : setHours) + '" data-col="' + colKey + '" data-item="' + itemId + '"></div></div>' +
+      '<div class="creative-cell"><div class="cell-label">Set Cost</div><div class="cell-value hours">' + fmt$(setCost) + '</div></div>' +
+      '<div class="creative-cell"><div class="cell-label">Tracked</div><div class="cell-value hours">' + fmtH(trackedHours || 0, 1) + '</div></div>' +
+      '<div class="creative-cell"><div class="cell-label">Tracked Cost</div><div class="cell-value hours">' + fmt$(trackedCost) + '</div></div>' +
+    '</div>';
+}
+
+function combinedRow(c1Set, c2Set, c1SetCost, c2SetCost, c1Tracked, c2Tracked, c1TC, c2TC, budget) {
+  var totalSet = (c1Set || 0) + (c2Set || 0);
+  var totalSetCost = c1SetCost + c2SetCost;
+  var totalTracked = (c1Tracked || 0) + (c2Tracked || 0);
+  var totalTC = c1TC + c2TC;
+  var budgetPct = budget > 0 ? (totalTC / budget) * 100 : 0;
+  var barClass = budgetPct <= 70 ? 'good' : budgetPct <= 95 ? 'warn' : 'bad';
+  var html = '<div class="creative-row combined">' +
+    '<div class="creative-head">' +
+      '<div class="creative-name">Combined Total</div>' +
+      '<div class="creative-rate">' + fmtH(totalSet, 1) + ' allocated · ' + fmtH(totalTracked, 1) + ' tracked</div>' +
+    '</div>' +
+    '<div class="creative-grid">' +
+      '<div class="creative-cell"><div class="cell-label">Set Hours</div><div class="cell-value hours">' + fmtH(totalSet, 1) + '</div></div>' +
+      '<div class="creative-cell"><div class="cell-label">Set Cost</div><div class="cell-value hours">' + fmt$(totalSetCost) + '</div></div>' +
+      '<div class="creative-cell"><div class="cell-label">Tracked</div><div class="cell-value hours">' + fmtH(totalTracked, 1) + '</div></div>' +
+      '<div class="creative-cell"><div class="cell-label">Tracked Cost</div><div class="cell-value hours">' + fmt$(totalTC) + '</div></div>' +
+    '</div>';
+  if (budget > 0) {
+    html += '<div class="progress-wrap">' +
+      '<div class="progress-label"><span>Spend vs budget</span><strong>' + fmt$(totalTC) + ' / ' + fmt$(budget) + ' (' + fmtPct(budgetPct) + ')</strong></div>' +
+      '<div class="progress-bar"><div class="progress-fill ' + barClass + '" style="width:' + Math.min(budgetPct, 100) + '%"></div></div>' +
+    '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function esc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Save (debounced) ────────────────────────────────────────
+function saveField(itemId, colKey, value) {
+  var colId = colMap[colKey];
+  if (!colId) {
+    toast('Column "' + colKey + '" not found on board', true);
+    return;
+  }
+  clearTimeout(saveTimers[itemId + '_' + colKey]);
+  saveTimers[itemId + '_' + colKey] = setTimeout(function() {
+    toast('Saving…');
+    updateCol(itemId, colId, value)
+      .then(function() {
+        toast('Saved');
+        // Refetch just this item to keep UI in sync
+        return fetchSingleItem(itemId).then(function(upd) {
+          if (upd) { selectedItem = upd; renderDetail(parseItem(upd)); }
+        });
+      })
+      .catch(function(e) { console.error(e); toast('Save failed: ' + e.message, true); });
+  }, 400);
+}
+
+function toast(msg, isError) {
+  var t = $('save-indicator');
+  t.textContent = msg;
+  t.classList.toggle('error', !!isError);
+  t.classList.add('show');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(function() { t.classList.remove('show'); }, 2000);
+}
+
+// ── Boot ───────────────────────────────────────────────────
+function boot() {
+  if (!CONFIG.apiToken || CONFIG.apiToken === 'YOUR_API_TOKEN_HERE')
+    return showError('API token not set', 'Paste your monday.com API token into the CONFIG block at the top.');
+  if (!CONFIG.boardId || CONFIG.boardId === 'YOUR_BOARD_ID_HERE')
+    return showError('Board ID not set', 'Paste your monday.com board ID into the CONFIG block at the top.');
+
+  setMsg('Loading...');
+
+  // Try URL first, then monday context
+  var urlId = getItemIdFromUrl();
+  var itemIdPromise = urlId ? Promise.resolve(urlId) : getItemIdFromMonday();
+
+  itemIdPromise.then(function(itemId) {
+    if (!itemId) {
+      return showError('No item selected',
+        'This view must be embedded inside a monday.com item. ' +
+        'For testing, append "?itemId=YOUR_ITEM_ID" to the URL.');
+    }
+
+    console.log('[itemId]', itemId);
+    setMsg('Loading columns...');
+    fetchColumns()
+      .then(function(cols) {
+        allBoardCols = cols;
+        colMap = mapCols(cols);
+        console.log('[colMap]', colMap);
+        setMsg('Loading job...');
+        return fetchSingleItem(itemId);
+      })
+      .then(function(item) {
+        if (!item) return showError('Item not found', 'Could not find item ' + itemId + ' on this board.');
+        $('loading').style.display = 'none';
+        $('app').style.display = 'flex';
+        selectItem(item);
+      })
+      .catch(function(e) {
+        console.error(e);
+        showError('Failed to load', e.message || String(e));
+      });
+  });
+}
+
+window.onerror = function(msg, src, line) {
+  showError('JavaScript Error', msg + ' (line ' + line + ')');
+};
+
+boot();
+</script>
+</body>
+</html>
