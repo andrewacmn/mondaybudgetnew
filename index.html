@@ -361,7 +361,7 @@ var AUTO_ESTIMATES = {
   'BTS Videos': null,
   'Creative Strategy': null,
   'EDM': 4,
-  'EPKs': null,
+  'EPKs': 8,
   'Front of House': 8,
   'Front of House (Motion)': 8,
   'Internal Docs': null,
@@ -847,17 +847,20 @@ function renderDetail(item) {
   else estHint = 'Enter manually';
 
   html += fieldInput('Estimate hrs', item.estimateHours, 'estimateHours', item.id, 'hrs', estHint);
-  html += fieldInput('Override hrs', item.overrideHours, 'overrideHours', item.id, 'hrs', 'Blank = use estimate');
+  // Show total allocated (sum of Set Hrs) as a read-only field
+  var totalAllocated = (item._c1Set || 0) + (item._c2Set || 0);
+  html += field('Allocated hrs', totalAllocated > 0 ? fmtH(totalAllocated, 1) : '—', totalAllocated > 0 ? '' : 'muted');
   html += '</div>';
 
   if (item._bespoke && item.estimateHours === null) {
-    html += '<div style="background:#f1f5f9;border-radius:6px;padding:10px 12px;margin-top:10px;font-size:11px;color:#64748b;">This content type is bespoke — no auto-estimate. Enter hours manually above.</div>';
+    html += '<div style="background:#f1f5f9;border-radius:6px;padding:10px 12px;margin-top:10px;font-size:11px;color:#64748b;">This content type is bespoke — no auto-estimate. Enter hours manually for each creative below.</div>';
   }
 
-  if (item._effEstimate !== null && item.budget > 0) {
+  // Progress bar: total allocated cost vs budget
+  if (item.budget > 0 && item._estCost > 0) {
     var pct = (item._estCost / item.budget) * 100;
     html += '<div class="progress-wrap">';
-    html += '<div class="progress-label"><span>Estimated cost vs budget</span><strong>' + fmt$(item._estCost) + ' / ' + fmt$(item.budget) + ' (' + fmtPct(pct) + ')</strong></div>';
+    html += '<div class="progress-label"><span>Allocated cost vs budget</span><strong>' + fmt$(item._estCost) + ' / ' + fmt$(item.budget) + ' (' + fmtPct(pct) + ')</strong></div>';
     html += '<div class="progress-bar"><div class="progress-fill ' + quoteHealth + '" style="width:' + Math.min(pct, 100) + '%"></div></div>';
     html += '</div>';
   }
