@@ -274,65 +274,75 @@ function getTimeSessions(colId, creativeNameFilter) {
   if (!colId) return [];
   var c = (window._currentRawCV || []).find(function(x){ return x.id === colId; });
   if (!c) return [];
-  console.log('[time col ' + colId + '] raw value:', c.value);
-  console.log('[time col ' + colId + '] raw text:', c.text);
-  if (!c.value) return [];
-  try {
-    var v = JSON.parse(c.value);
-    console.log('[time col ' + colId + '] parsed object keys:', Object.keys(v));
-    console.log('[time col ' + colId + '] full parsed:', v);
+  console.log('[time col ' + colId + '] raw:', c);
 
-    // Try every known field that might contain session data
-    var sessions = null;
-    var candidateKeys = ['additional_value', 'sessions', 'history', 'rows', 'entries'];
-    for (var i = 0; i < candidateKeys.length; i++) {
-      if (Array.isArray(v[candidateKeys[i]])) {
-        sessions = v[candidateKeys[i]];
-        console.log('[time col ' + colId + '] found sessions in key:', candidateKeys[i], 'count:', sessions.length);
-        break;
+  // First, check if the TimeTrackingValue inline fragment gave us history directly
+  var sessions = null;
+  if (Array.isArray(c.history)) {
+    sessions = c.history;
+    console.log('[time col ' + colId + '] using history from TimeTrackingValue fragment, count:', sessions.length);
+  }
+
+  // Fallback to parsing value JSON
+  if (!sessions && c.value) {
+    try {
+      var v = JSON.parse(c.value);
+      console.log('[time col ' + colId + '] parsed value keys:', Object.keys(v));
+      var candidateKeys = ['additional_value', 'sessions', 'history', 'rows', 'entries'];
+      for (var i = 0; i < candidateKeys.length; i++) {
+        if (Array.isArray(v[candidateKeys[i]])) {
+          sessions = v[candidateKeys[i]];
+          console.log('[time col ' + colId + '] found sessions in key:', candidateKeys[i], 'count:', sessions.length);
+          break;
+        }
       }
+      // Include running session if active
+      if (v.running_session && v.running_session.started_at) {
+        sessions = (sessions || []).concat([{
+          started_at: v.running_session.started_at,
+          ended_at: Math.floor(Date.now() / 1000),
+          started_user_id: v.running_session.started_user_id,
+          isRunning: true
+        }]);
+      }
+    } catch(e) {
+      console.warn('time session parse error', e);
     }
+  }
 
-    // Include running session if active
-    if (v.running_session && v.running_session.started_at) {
-      var runningSession = {
-        started_at: v.running_session.started_at,
-        ended_at: Math.floor(Date.now() / 1000),
-        started_user_id: v.running_session.started_user_id,
-        isRunning: true
-      };
-      sessions = (sessions || []).concat([runningSession]);
-    }
-
-    if (!sessions || !sessions.length) {
-      console.log('[time col ' + colId + '] no session array found');
-      return [];
-    }
-
-    return sessions.map(function(session) {
-      var userId = session.started_user_id || session.manually_entered_start_user_id || session.user_id || session.userId || null;
-      var name = userId ? userNameById(userId) : '';
-      // Handle multiple possible field names for timestamps
-      var rawStart = session.started_at || session.startedAt || session.start || 0;
-      var rawEnd = session.ended_at || session.endedAt || session.end || 0;
-      // Monday stores these as unix seconds (10-digit) or milliseconds (13-digit)
-      var started = parseInt(rawStart, 10);
-      var ended = parseInt(rawEnd, 10);
-      if (started > 1e11) started = Math.floor(started / 1000); // ms -> sec
-      if (ended > 1e11) ended = Math.floor(ended / 1000);
-      return {
-        userId: userId,
-        userName: name,
-        startedAt: started ? new Date(started * 1000) : null,
-        endedAt: ended ? new Date(ended * 1000) : null,
-        durationSec: ended && started ? (ended - started) : 0,
-        isRunning: !!session.isRunning
-      };
-    }).filter(function(s){ return s.durationSec > 0; });
-  } catch(e) {
-    console.warn('time session parse error', e);
+  if (!sessions || !sessions.length) {
+    console.log('[time col ' + colId + '] no session array found');
     return [];
   }
+
+  return sessions.map(function(session) {
+    var userId = session.started_user_id || session.manually_entered_start_user_id || session.user_id || session.userId || null;
+    var name = userId ? userNameById(userId) : '';
+    var rawStart = session.started_at || session.startedAt || session.start || 0;
+    var rawEnd = session.ended_at || session.endedAt || session.end || 0;
+    // Monday stores these as unix seconds (10-digit) or milliseconds (13-digit) or ISO strings
+    var started, ended;
+    if (typeof rawStart === 'string' && rawStart.indexOf('T') !== -1) {
+      started = Math.floor(new Date(rawStart).getTime() / 1000);
+    } else {
+      started = parseInt(rawStart, 10);
+      if (started > 1e11) started = Math.floor(started / 1000);
+    }
+    if (typeof rawEnd === 'string' && rawEnd.indexOf('T') !== -1) {
+      ended = Math.floor(new Date(rawEnd).getTime() / 1000);
+    } else {
+      ended = parseInt(rawEnd, 10);
+      if (ended > 1e11) ended = Math.floor(ended / 1000);
+    }
+    return {
+      userId: userId,
+      userName: name,
+      startedAt: started ? new Date(started * 1000) : null,
+      endedAt: ended ? new Date(ended * 1000) : null,
+      durationSec: ended && started ? (ended - started) : 0,
+      isRunning: !!session.isRunning
+    };
+  }).filter(function(s){ return s.durationSec > 0; });
 }
 
 // Determine Andrew's rate for a specific item (stored per-item in a column or asked via UI)
@@ -433,7 +443,8 @@ function fetchItems() {
 }
 
 function fetchSingleItem(itemId) {
-  return api('{ items(ids:[' + itemId + ']) { id name column_values { id value text } } }')
+  // Use TimeTrackingValue fragment to get session history for duration/time-tracking columns
+  return api('{ items(ids:[' + itemId + ']) { id name column_values { id value text ... on TimeTrackingValue { history { started_at ended_at started_user_id manually_entered_start_date manually_entered_start_time manually_entered_end_date manually_entered_end_time } running duration } } } }')
     .then(function(d) { return (d && d.items && d.items[0]) || null; });
 }
 
@@ -804,7 +815,11 @@ function renderDetail(item) {
   html += sumCard('Budget', fmt$(item.budget), item.contentType || '—', 'neutral');
   html += sumCard('Est. cost', fmt$(item._estCost), item._effEstimate !== null ? fmtH(item._effEstimate) + ' @ set rates' : 'Not set', quoteHealth);
   html += sumCard('Tracked', fmt$(item._trackedCost), fmtH(item._trackedHrs, 1) + ' logged', liveHealth);
-  html += sumCard('Remaining', fmt$(item._remaining), hoursRemaining !== null ? fmtH(hoursRemaining, 1) + ' left' : '', item._remaining < 0 ? 'bad' : item._remaining < item.budget * 0.2 ? 'warn' : 'good');
+  if (item.budget > 0) {
+    html += sumCard('Remaining', fmt$(item._remaining), hoursRemaining !== null ? fmtH(hoursRemaining, 1) + ' left' : '', item._remaining < 0 ? 'bad' : item._remaining < item.budget * 0.2 ? 'warn' : 'good');
+  } else {
+    html += sumCard('Remaining', '—', 'No budget set', 'neutral');
+  }
   html += '</div>';
 
   // Quote card
@@ -1091,23 +1106,48 @@ function saveField(itemId, colKey, value) {
   }, 400);
 }
 
-// Save a person to a people column (different value format required by monday)
-function savePersonField(itemId, colKey, userId) {
+// Save a creative to Monday. Handles both People columns AND Dropdown columns
+// since different boards use different column types for creative assignment.
+function savePersonField(itemId, colKey, userIdOrValue) {
   var colId = colMap[colKey];
   if (!colId) { toast('Column "' + colKey + '" not found', true); return; }
+  // Determine column type from ID prefix (monday convention) or from allBoardCols lookup
+  var colMeta = allBoardCols.find(function(c){ return c.id === colId; });
+  var colType = colMeta ? colMeta.type : '';
+  console.log('[savePersonField]', { itemId: itemId, colId: colId, colType: colType, selectedValue: userIdOrValue });
+
   toast('Saving…');
-  // monday people columns require JSON with personsAndTeams array
-  var valueObj = userId
-    ? { personsAndTeams: [{ id: parseInt(userId, 10), kind: 'person' }] }
-    : { personsAndTeams: [] };
-  var valueStr = JSON.stringify(valueObj);
-  console.log('[savePersonField]', { itemId: itemId, colId: colId, valueStr: valueStr });
-  // Use change_multiple_column_values which handles people reliably
+  var valueObj;
+
+  if (colType === 'dropdown' || colId.indexOf('dropdown') === 0) {
+    // Dropdown columns take labels (the user's name or first name)
+    // userIdOrValue here is the user's ID — we need to convert to their first name
+    // since the dropdown labels are first names only
+    var label = '';
+    if (userIdOrValue) {
+      var u = allUsers.find(function(x){ return String(x.id) === String(userIdOrValue); });
+      if (u) {
+        // Use first name — the dropdown labels appear to be first names only based on your board
+        label = u.name.trim().split(/\s+/)[0];
+      } else {
+        // Fall back to the raw value (might already be a string label)
+        label = userIdOrValue;
+      }
+    }
+    valueObj = label ? { labels: [label] } : { labels: [] };
+  } else {
+    // People / person column
+    valueObj = userIdOrValue
+      ? { personsAndTeams: [{ id: parseInt(userIdOrValue, 10), kind: 'person' }] }
+      : { personsAndTeams: [] };
+  }
+
   var mutation = 'mutation { change_multiple_column_values(item_id:' + itemId +
     ', board_id:' + CONFIG.boardId +
     ', column_values:' + JSON.stringify(JSON.stringify({ [colId]: valueObj })) +
     ') { id } }';
   console.log('[savePersonField] mutation:', mutation);
+
   api(mutation)
     .then(function(r) {
       console.log('[savePersonField] response:', r);
