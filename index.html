@@ -159,8 +159,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f1f5f9;color:#1e293b;m
 
 <script>
 var CONFIG = {
-  apiToken: 'eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjQ1NjA4NTcwMSwiYWFpIjoxMSwidWlkIjo2OTYyOTM1MSwiaWFkIjoiMjAyNS0wMS0xMFQwNjoyMTozMi4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6NjQzMTgxMCwicmduIjoidXNlMSJ9.CaVqnG51LtzKP4MTxXCflpqaZA64n0TvS6DzmK-7R84',
-  boardId:  '18391057818'
+  apiToken: 'YOUR_API_TOKEN_HERE',
+  boardId:  'YOUR_BOARD_ID_HERE'
 };
 </script>
 
@@ -247,10 +247,20 @@ function getRateFor(fullName, contentType) {
 function getCreativeUsers() {
   var rated = {};
   ['MARGO','LISA','BRETT','ANDREW','LINDSEY'].forEach(function(n){ rated[n] = true; });
-  return allUsers.filter(function(u) {
+  var matched = allUsers.filter(function(u) {
     var first = (u.name || '').trim().split(/\s+/)[0].toUpperCase();
     return rated[first];
   });
+  // Dedupe by first name — if multiple users share a first name (e.g. "Andrew" and "Andrew Brentnall"),
+  // keep the one with the longest full name (most likely to be the real person, not a test account)
+  var byFirstName = {};
+  matched.forEach(function(u) {
+    var first = u.name.trim().split(/\s+/)[0].toUpperCase();
+    if (!byFirstName[first] || u.name.length > byFirstName[first].name.length) {
+      byFirstName[first] = u;
+    }
+  });
+  return Object.values(byFirstName).sort(function(a,b){ return a.name.localeCompare(b.name); });
 }
 
 function userNameById(id) {
